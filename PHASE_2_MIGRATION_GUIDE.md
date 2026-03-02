@@ -297,9 +297,9 @@ const count = await diagnosisService.getDiagnosesCount();
 - ✅ Update UI on remote changes
 
 ### 2.5 Testing & Validation
-- [ ] Write unit tests for service
-- [ ] Write integration tests
-- [ ] Performance testing with large datasets
+- ✅ Write unit tests for service
+- ✅ Write integration tests
+- ✅ Performance testing with large datasets
 
 ## Troubleshooting
 
