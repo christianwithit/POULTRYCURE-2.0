@@ -49,6 +49,23 @@ const mapToSupabaseDiagnosis = (diagnosis: DiagnosisResult, userId: string): Omi
   };
 };
 
+const mapToSupabaseDiagnosisWithTimestamp = (diagnosis: DiagnosisResult, userId: string): Omit<SupabaseDiagnosis, 'created_at'> => {
+  return {
+    id: diagnosis.id,
+    user_id: userId,
+    type: diagnosis.type,
+    input: diagnosis.input,
+    diagnosis: diagnosis.diagnosis,
+    confidence: diagnosis.confidence,
+    recommendations: diagnosis.recommendations,
+    treatment: diagnosis.treatment,
+    prevention: diagnosis.prevention,
+    severity: normalizeSeverity(diagnosis.severity),
+    image_url: diagnosis.imageUri,
+    updated_at: diagnosis.updated_at || new Date().toISOString(),
+  };
+};
+
 const mapFromSupabaseDiagnosis = (supabaseDiagnosis: SupabaseDiagnosis): DiagnosisResult => {
   return {
     id: supabaseDiagnosis.id,
@@ -62,6 +79,7 @@ const mapFromSupabaseDiagnosis = (supabaseDiagnosis: SupabaseDiagnosis): Diagnos
     severity: supabaseDiagnosis.severity,
     date: supabaseDiagnosis.created_at,
     imageUri: supabaseDiagnosis.image_url,
+    updated_at: supabaseDiagnosis.updated_at,
   };
 };
 
@@ -82,6 +100,29 @@ export const saveDiagnosis = async (diagnosis: DiagnosisResult): Promise<Diagnos
 
   if (error) {
     console.error('Error saving diagnosis:', error);
+    throw new Error(error.message);
+  }
+
+  return mapFromSupabaseDiagnosis(data);
+};
+
+export const upsertDiagnosis = async (diagnosis: DiagnosisResult): Promise<DiagnosisResult> => {
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) {
+    throw new Error('User not authenticated');
+  }
+
+  const supabaseDiagnosis = mapToSupabaseDiagnosisWithTimestamp(diagnosis, user.id);
+
+  const { data, error } = await supabase
+    .from('diagnoses')
+    .upsert(supabaseDiagnosis, { onConflict: 'id' })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error upserting diagnosis:', error);
     throw new Error(error.message);
   }
 

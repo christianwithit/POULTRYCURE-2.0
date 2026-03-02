@@ -19,7 +19,7 @@ import { useDiagnosis } from '../../contexts/DiagnosisContext';
 import { DiagnosisResult } from '../../types/types';
 
 export default function History() {
-  const { history, clearHistory, deleteDiagnosis } = useDiagnosis();
+  const { history, clearHistory, deleteDiagnosis, refreshHistory, syncError, clearSyncError, clearPendingQueue } = useDiagnosis();
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
 
@@ -44,7 +44,8 @@ export default function History() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    setTimeout(() => setRefreshing(false), 500);
+    await refreshHistory();
+    setRefreshing(false);
   };
 
   const handleClearHistory = () => {
@@ -62,6 +63,28 @@ export default function History() {
               Alert.alert('Success', 'All history has been cleared.');
             } catch {
               Alert.alert('Error', 'Failed to clear history. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleClearPendingQueue = () => {
+    Alert.alert(
+      'Clear Pending Sync',
+      'Clear all pending sync operations? This will remove items that failed to sync.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear Pending',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await clearPendingQueue();
+              Alert.alert('Success', 'Pending sync queue has been cleared.');
+            } catch {
+              Alert.alert('Error', 'Failed to clear pending queue. Please try again.');
             }
           },
         },
@@ -192,6 +215,17 @@ export default function History() {
       <Text style={styles.emptyText}>
         Your diagnosis records will appear here once you start using the app.
       </Text>
+      
+      {/* Temporary button to clear pending queue */}
+      <TouchableOpacity
+        style={[styles.startButton, { backgroundColor: COLORS.warning, marginTop: SPACING.md }]}
+        onPress={handleClearPendingQueue}
+        activeOpacity={0.8}
+      >
+        <Ionicons name="refresh-circle-outline" size={22} color={COLORS.white} />
+        <Text style={styles.startButtonText}>Clear Pending Sync</Text>
+      </TouchableOpacity>
+      
       <TouchableOpacity
         style={styles.startButton}
         onPress={() => (router as any).push('/(tabs)')}
@@ -237,6 +271,13 @@ const styles = StyleSheet.create({
     color: COLORS.error,
     fontWeight: '500',
     lineHeight: FONT_SIZES.sm * LINE_HEIGHT.sm,
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: SPACING.sm,
+  },
+  clearPendingButton: {
+    backgroundColor: `${COLORS.warning}20`,
   },
   listContent: {
     padding: SPACING.lg,
@@ -385,14 +426,24 @@ const styles = StyleSheet.create({
             <Text style={styles.recordCount}>
               {history.length} {history.length === 1 ? 'record' : 'records'}
             </Text>
-            <TouchableOpacity
-              style={styles.clearButton}
-              onPress={handleClearHistory}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="trash-outline" size={18} color={COLORS.error} />
-              <Text style={styles.clearButtonText}>Clear All</Text>
-            </TouchableOpacity>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={[styles.clearButton, styles.clearPendingButton]}
+                onPress={handleClearPendingQueue}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="refresh-circle-outline" size={18} color={COLORS.warning} />
+                <Text style={[styles.clearButtonText, { color: COLORS.warning }]}>Clear Sync</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.clearButton}
+                onPress={handleClearHistory}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trash-outline" size={18} color={COLORS.error} />
+                <Text style={styles.clearButtonText}>Clear All</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 

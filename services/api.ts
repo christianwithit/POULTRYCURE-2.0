@@ -179,7 +179,8 @@ export class DiagnosisAPI {
           recommendations: aiResult.recommendations,
           treatment: aiResult.treatment,
           severity: aiResult.severity,
-          date: new Date().toISOString()
+          date: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }
       };
 
@@ -215,6 +216,7 @@ export class DiagnosisAPI {
           ],
           severity: 'low',
           date: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
           imageUri
         }
       };
@@ -316,6 +318,7 @@ export class DiagnosisAPI {
           treatment: aiResult.treatment,
           severity: aiResult.severity,
           date: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
           imageUri
         }
       };
@@ -341,6 +344,7 @@ export class DiagnosisAPI {
           ],
           severity: 'low',
           date: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
           imageUri
         }
       };
@@ -395,7 +399,8 @@ export class DiagnosisAPI {
             'Consult with a veterinarian if concerned'
           ],
           severity: 'low',
-          date: new Date().toISOString()
+          date: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         }
       };
     }
@@ -405,7 +410,7 @@ export class DiagnosisAPI {
     return {
       success: true,
       data: {
-        id: Date.now().toString(),
+        id: generateUUID(),
         type: 'symptom',
         input: symptoms,
         diagnosis: `${topMatch.disease} (Local Analysis)`,
@@ -414,7 +419,8 @@ export class DiagnosisAPI {
         treatment: topMatch.info.treatment,
         prevention: topMatch.info.prevention,
         severity: topMatch.info.severity,
-        date: new Date().toISOString()
+        date: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       }
     };
   }

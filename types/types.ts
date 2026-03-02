@@ -11,6 +11,7 @@ export interface DiagnosisResult {
   severity: 'low' | 'moderate' | 'high';
   date: string;
   imageUri?: string;
+  updated_at: string;
 }
 
 export interface Symptom {
