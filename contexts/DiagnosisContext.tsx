@@ -2,7 +2,7 @@
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
+import React, { createContext, ReactNode, useContext, useEffect, useState, useRef } from 'react';
 
 import { DiagnosisResult } from '../types/types';
 
@@ -10,9 +10,11 @@ import { useAuth } from './AuthContext';
 
 import * as diagnosisService from '../services/supabase-diagnoses';
 
+import { supabase } from '../lib/supabase';
+
 import NetInfo from '@react-native-community/netinfo';
 
-
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 interface DiagnosisContextType {
 
@@ -39,6 +41,8 @@ interface DiagnosisContextType {
   clearSyncError: () => void;
 
   clearPendingQueue: () => Promise<void>;
+
+  isRealtimeConnected: boolean;
 
 }
 
@@ -138,9 +142,11 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
 
   const [syncError, setSyncError] = useState<string | null>(null);
 
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState(false);
+
   const { user } = useAuth();
 
-
+  const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
 
@@ -185,6 +191,131 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
 
   }, [user, isOnline]);
+
+
+
+  useEffect(() => {
+    if (!user || !isOnline) {
+      // Disconnect if user is offline or not logged in
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+        setIsRealtimeConnected(false);
+      }
+      return;
+    }
+
+    // Setup real-time subscription
+    const setupRealtimeSubscription = async () => {
+      try {
+        // Clean up existing subscription
+        if (realtimeChannelRef.current) {
+          supabase.removeChannel(realtimeChannelRef.current);
+        }
+
+        // Create new subscription for user's diagnoses
+        const channel = supabase
+          .channel('diagnoses_changes')
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'diagnoses',
+              filter: `user_id=eq.${user.id}`
+            },
+            (payload: any) => handleRealtimeChange(payload)
+          )
+          .subscribe((status: any) => {
+            console.log('Realtime subscription status:', status);
+            setIsRealtimeConnected(status === 'SUBSCRIBED');
+          });
+
+        realtimeChannelRef.current = channel;
+        console.log('✅ Real-time subscription established for user:', user.id);
+      } catch (error) {
+        console.error('❌ Failed to setup real-time subscription:', error);
+        setIsRealtimeConnected(false);
+      }
+    };
+
+    setupRealtimeSubscription();
+
+    // Cleanup on unmount
+    return () => {
+      if (realtimeChannelRef.current) {
+        supabase.removeChannel(realtimeChannelRef.current);
+        realtimeChannelRef.current = null;
+        setIsRealtimeConnected(false);
+      }
+    };
+  }, [user, isOnline]);
+
+
+
+  const handleRealtimeChange = async (payload: any) => {
+    console.log('🔄 Real-time change detected:', payload);
+
+    try {
+      const { eventType, new: newRecord, old: oldRecord } = payload;
+
+      switch (eventType) {
+        case 'INSERT':
+          // New diagnosis added from another device
+          if (newRecord && newRecord.user_id === user?.id) {
+            console.log('➕ New diagnosis added remotely:', newRecord.id);
+            // Add to local history if not already present
+            setHistory(prevHistory => {
+              const exists = prevHistory.some(item => item.id === newRecord.id);
+              if (!exists) {
+                const updatedHistory = [newRecord, ...prevHistory];
+                saveToLocalStorage(updatedHistory);
+                return updatedHistory;
+              }
+              return prevHistory;
+            });
+          }
+          break;
+
+        case 'UPDATE':
+          // Diagnosis updated from another device
+          if (newRecord && newRecord.user_id === user?.id) {
+            console.log('✏️ Diagnosis updated remotely:', newRecord.id);
+            setHistory(prevHistory => {
+              const updatedHistory = prevHistory.map(item => 
+                item.id === newRecord.id ? newRecord : item
+              );
+              saveToLocalStorage(updatedHistory);
+              return updatedHistory;
+            });
+          }
+          break;
+
+        case 'DELETE':
+          // Diagnosis deleted from another device
+          if (oldRecord && oldRecord.user_id === user?.id) {
+            console.log('🗑️ Diagnosis deleted remotely:', oldRecord.id);
+            setHistory(prevHistory => {
+              const updatedHistory = prevHistory.filter(item => item.id !== oldRecord.id);
+              saveToLocalStorage(updatedHistory);
+              return updatedHistory;
+            });
+          }
+          break;
+
+        default:
+          console.log('❓ Unknown real-time event:', eventType);
+      }
+
+      // Update last sync time
+      const now = new Date();
+      setLastSyncedAt(now);
+      await AsyncStorage.setItem(LAST_SYNC_KEY, now.toISOString());
+
+    } catch (error) {
+      console.error('❌ Failed to handle real-time change:', error);
+    }
+  };
 
 
 
@@ -828,6 +959,8 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
         clearSyncError,
 
         clearPendingQueue,
+
+        isRealtimeConnected,
 
       }}
 

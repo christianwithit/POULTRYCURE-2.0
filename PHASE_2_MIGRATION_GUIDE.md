@@ -292,9 +292,9 @@ const count = await diagnosisService.getDiagnosesCount();
 - ❌ Add sync error notifications (skipped - not user-facing)
 
 ### 2.4 Multi-Device Support
-- [ ] Implement real-time subscriptions
-- [ ] Listen to diagnosis changes
-- [ ] Update UI on remote changes
+- ✅ Implement real-time subscriptions
+- ✅ Listen to diagnosis changes
+- ✅ Update UI on remote changes
 
 ### 2.5 Testing & Validation
 - [ ] Write unit tests for service
