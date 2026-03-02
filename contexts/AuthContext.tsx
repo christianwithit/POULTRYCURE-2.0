@@ -1,4 +1,4 @@
-import { ErrorHandler, RetryHandler } from '@/utils/errorHandling';
+import { ErrorHandler, RetryHandler } from '../utils/errorHandling';
 import React, { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { supabaseAuthService } from '../services/supabase-auth';
@@ -26,6 +26,7 @@ const mapSupabaseUser = (supabaseUser: any): User => ({
   email: supabaseUser.email ?? '',
   name: supabaseUser.user_metadata?.full_name ?? '',
   createdAt: supabaseUser.created_at,
+  updatedAt: supabaseUser.updated_at || supabaseUser.created_at,
 });
 
 export function AuthProvider({ children }: AuthProviderProps) {
@@ -187,3 +188,5 @@ export function useAuth() {
   }
   return context;
 }
+
+export { AuthContext };

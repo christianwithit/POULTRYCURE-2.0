@@ -1,4 +1,6 @@
 // types/types.ts
+import { ImageMetadata } from './image';
+
 export interface DiagnosisResult {
   id: string;
   type: 'symptom' | 'image';
@@ -10,7 +12,10 @@ export interface DiagnosisResult {
   prevention?: string;
   severity: 'low' | 'moderate' | 'high';
   date: string;
-  imageUri?: string;
+  imageUri?: string;          // Local URI before upload
+  imageUrl?: string;          // Supabase Storage URL after upload
+  imagePath?: string;         // Storage path
+  imageMetadata?: ImageMetadata;
   updated_at: string;
 }
 

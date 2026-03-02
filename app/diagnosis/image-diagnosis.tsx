@@ -18,14 +18,18 @@ import {
 import { BORDER_RADIUS, COLORS, FONT_SIZES, LINE_HEIGHT, SHADOWS, SPACING } from '../../constants/theme';
 import { useDiagnosis } from '../../contexts/DiagnosisContext';
 import { DiagnosisAPI } from '../../services/api';
+import { uploadDiagnosisImage, validateImage, cleanupTempFiles } from '../../services/imageService';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function ImageDiagnosis() {
   const [image, setImage] = useState<string | null>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [hasGalleryPermission, setHasGalleryPermission] = useState<boolean | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const router = useRouter();
   const { addDiagnosis } = useDiagnosis();
+  const { user } = useAuth();
 
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -139,7 +143,7 @@ export default function ImageDiagnosis() {
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [4, 3],
         quality: 0.8,
@@ -160,30 +164,78 @@ export default function ImageDiagnosis() {
       return;
     }
 
+    if (!user) {
+      Alert.alert('Authentication Required', 'Please log in to analyze images.');
+      return;
+    }
+
     setIsLoading(true);
+    setUploadProgress(0);
 
     try {
+      // Step 1: Validate image
+      console.log('🔍 Validating image...');
+      const isValid = await validateImage(image);
+      if (!isValid) {
+        throw new Error('Invalid image format or size too large');
+      }
+
+      // Step 2: Analyze image locally first
+      console.log('🧠 Analyzing image locally...');
+      setUploadProgress(25);
       const response = await DiagnosisAPI.analyzeImage(image);
 
       if (!response.success || !response.data) {
         throw new Error(response.error || 'Analysis failed');
       }
 
-      await addDiagnosis(response.data);
+      // Step 3: Upload image to Supabase Storage
+      console.log('📤 Uploading image to storage...');
+      setUploadProgress(50);
+      
+      // Generate a temporary diagnosis ID for upload
+      const tempDiagnosisId = `temp-${Date.now()}`;
+      const uploadResult = await uploadDiagnosisImage(image, tempDiagnosisId, user.id);
+      
+      setUploadProgress(75);
 
+      // Step 4: Update diagnosis with image information
+      const diagnosisWithImage = {
+        ...response.data,
+        imageUri: image,
+        imageUrl: uploadResult.url,
+        imagePath: uploadResult.path,
+        imageMetadata: uploadResult.metadata,
+      };
+
+      console.log('💾 Saving diagnosis with image...');
+      setUploadProgress(90);
+      await addDiagnosis(diagnosisWithImage);
+
+      // Step 5: Cleanup temporary files
+      await cleanupTempFiles([image]);
+      setUploadProgress(100);
+
+      console.log('✅ Image analysis and upload complete!');
+      
       router.push({
         pathname: '/diagnosis/result',
         params: { diagnosisId: response.data.id },
       });
     } catch (error) {
-      console.error('Image analysis error:', error);
+      console.error('❌ Image analysis error:', error);
+      
+      // Cleanup on error
+      await cleanupTempFiles([image]);
+      
       Alert.alert(
         'Analysis Failed',
-        'Failed to analyze image. Please try again or use symptom diagnosis.',
+        error instanceof Error ? error.message : 'Failed to analyze image. Please try again or use symptom diagnosis.',
         [{ text: 'OK' }]
       );
     } finally {
       setIsLoading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -304,13 +356,18 @@ export default function ImageDiagnosis() {
                 disabled={isLoading}
               >
                 {isLoading ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
+                  <View style={styles.loadingContent}>
+                    <ActivityIndicator size="small" color={COLORS.white} />
+                    <Text style={styles.imageActionText}>
+                      {uploadProgress > 0 ? `Uploading... ${Math.round(uploadProgress)}%` : 'Analyzing...'}
+                    </Text>
+                  </View>
                 ) : (
-                  <Ionicons name="analytics-outline" size={24} color={COLORS.white} />
+                  <>
+                    <Ionicons name="analytics-outline" size={24} color={COLORS.white} />
+                    <Text style={styles.imageActionText}>Analyze</Text>
+                  </>
                 )}
-                <Text style={styles.imageActionText}>
-                  {isLoading ? 'Analyzing...' : 'Analyze'}
-                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -462,23 +519,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.secondary,
     flex: 0.65,
   },
-  analyzeButtonDisabled: {
-    backgroundColor: COLORS.textMuted,
-    opacity: 0.6,
-  },
-  analyzeButtonText: {
-    color: COLORS.white,
-    fontSize: FONT_SIZES.lg,
-    fontWeight: '600',
-    marginLeft: SPACING.sm,
-    lineHeight: FONT_SIZES.lg * LINE_HEIGHT.sm,
-  },
-  note: {
-    fontSize: FONT_SIZES.xs,
-    color: COLORS.textMuted,
-    textAlign: 'center',
-    fontStyle: 'italic',
-    lineHeight: FONT_SIZES.xs * LINE_HEIGHT.sm,
+  loadingContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   infoBox: {
     flexDirection: 'row',

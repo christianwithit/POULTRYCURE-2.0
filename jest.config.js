@@ -1,5 +1,5 @@
 module.exports = {
-  testEnvironment: 'node',
+  testEnvironment: 'jsdom',
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
   testMatch: [
     '**/__tests__/**/*.(ts|tsx|js)',
@@ -25,7 +25,8 @@ module.exports = {
     '^@react-native-async-storage/async-storage$': '<rootDir>/__mocks__/async-storage.js',
     '^expo-secure-store$': '<rootDir>/__mocks__/expo-secure-store.js',
     '^expo-crypto$': '<rootDir>/__mocks__/expo-crypto.js',
-    '^react-native$': 'react-native-web',
+    // Keep react-native mapping for non-test files, but override for React Native Testing Library
+    '^react-native$': '<rootDir>/node_modules/react-native',
   },
   testPathIgnorePatterns: [
     '/node_modules/',

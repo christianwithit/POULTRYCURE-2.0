@@ -7,3 +7,6 @@ global.console = {
   ...console,
   warn: jest.fn(),
 };
+
+// Import jest-dom matchers
+require('@testing-library/jest-dom');

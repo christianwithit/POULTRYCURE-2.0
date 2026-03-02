@@ -44,9 +44,12 @@ interface DiagnosisContextType {
 
   isRealtimeConnected: boolean;
 
+  // Image-related functions
+  addImageDiagnosis: (imageUri: string, analysisResult: any) => Promise<void>;
+  deleteDiagnosisImage: (diagnosisId: string) => Promise<void>;
+  updateDiagnosisImage: (diagnosisId: string, imageUri: string) => Promise<void>;
+
 }
-
-
 
 const DiagnosisContext = createContext<DiagnosisContextType | undefined>(undefined);
 
@@ -925,7 +928,109 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       console.error('Failed to clear pending queue:', error);
 
     }
+  };
 
+  // Image-related functions
+  const addImageDiagnosis = async (imageUri: string, analysisResult: any) => {
+    try {
+      console.log('🖼️ Adding image diagnosis...');
+      
+      // Upload image to Supabase first
+      const { uploadDiagnosisImage } = await import('../services/imageService');
+      const uploadResult = await uploadDiagnosisImage(imageUri, analysisResult.id || 'temp', user!.id);
+      
+      // Create a diagnosis result with image information
+      const imageDiagnosis: DiagnosisResult = {
+        ...analysisResult,
+        type: 'image',
+        imageUri,
+        imageUrl: uploadResult.url,
+        imagePath: uploadResult.path,
+        imageMetadata: uploadResult.metadata,
+        date: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      // Use the existing addDiagnosis function
+      await addDiagnosis(imageDiagnosis);
+      
+      console.log('✅ Image diagnosis added successfully with Supabase URL');
+    } catch (error) {
+      console.error('❌ Failed to add image diagnosis:', error);
+      throw error;
+    }
+  };
+
+  const deleteDiagnosisImage = async (diagnosisId: string) => {
+    try {
+      console.log('🗑️ Deleting diagnosis image...', diagnosisId);
+      
+      // Find the diagnosis with the image
+      const diagnosis = history.find(d => d.id === diagnosisId);
+      
+      if (diagnosis?.imagePath) {
+        // Delete image from storage
+        const { deleteImage } = await import('../services/imageService');
+        await deleteImage('diagnosis-images', diagnosis.imagePath);
+      }
+      
+      // Delete the diagnosis record
+      await deleteDiagnosis(diagnosisId);
+      
+      console.log('✅ Diagnosis image deleted successfully');
+    } catch (error) {
+      console.error('❌ Failed to delete diagnosis image:', error);
+      throw error;
+    }
+  };
+
+  const updateDiagnosisImage = async (diagnosisId: string, imageUri: string) => {
+    try {
+      console.log('🔄 Updating diagnosis image...', diagnosisId);
+      
+      // Find the existing diagnosis
+      const diagnosis = history.find(d => d.id === diagnosisId);
+      if (!diagnosis) {
+        throw new Error('Diagnosis not found');
+      }
+
+      // Delete old image if it exists
+      if (diagnosis.imagePath) {
+        const { deleteImage } = await import('../services/imageService');
+        await deleteImage('diagnosis-images', diagnosis.imagePath);
+      }
+
+      // Upload new image
+      const { uploadDiagnosisImage } = await import('../services/imageService');
+      const uploadResult = await uploadDiagnosisImage(imageUri, diagnosisId, user!.id);
+
+      // Update diagnosis with new image information
+      const updatedDiagnosis: DiagnosisResult = {
+        ...diagnosis,
+        imageUri,
+        imageUrl: uploadResult.url,
+        imagePath: uploadResult.path,
+        imageMetadata: uploadResult.metadata,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Update in local state
+      const newHistory = history.map(d => 
+        d.id === diagnosisId ? updatedDiagnosis : d
+      );
+      setHistory(newHistory);
+      await saveToLocalStorage(newHistory);
+
+      // Update in Supabase
+      if (isOnline && user) {
+        await diagnosisService.upsertDiagnosis(updatedDiagnosis);
+      }
+
+      console.log('✅ Diagnosis image updated successfully');
+    } catch (error) {
+      console.error('❌ Failed to update diagnosis image:', error);
+      throw error;
+    }
   };
 
 
@@ -961,6 +1066,10 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
         clearPendingQueue,
 
         isRealtimeConnected,
+
+        addImageDiagnosis,
+        deleteDiagnosisImage,
+        updateDiagnosisImage,
 
       }}
 

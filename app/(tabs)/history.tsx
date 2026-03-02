@@ -146,14 +146,40 @@ export default function History() {
       minute: '2-digit',
     });
 
+    // Get image URL - handle both camelCase and snake_case from database
+    const imageUrl = item.imageUrl || (item as any).image_url || item.imageUri;
+
+    // Debug logging
+    console.log('🔍 History Item Debug:', {
+      id: item.id,
+      type: item.type,
+      imageUrl: item.imageUrl,
+      image_url: (item as any).image_url,
+      imageUri: item.imageUri,
+      finalImageUrl: imageUrl
+    });
+
     return (
       <TouchableOpacity
         style={styles.historyCard}
         onPress={() => handleViewDetails(item.id)}
         activeOpacity={0.7}
       >
-        {item.imageUri && (
-          <Image source={{ uri: item.imageUri }} style={styles.thumbnail} resizeMode="cover" />
+        {imageUrl ? (
+          <Image 
+            source={{ uri: imageUrl }} 
+            style={styles.thumbnail} 
+            resizeMode="cover"
+            onError={(error) => console.log('🖼️ Image load error:', error.nativeEvent.error)}
+            onLoad={() => console.log('🖼️ Image loaded successfully:', imageUrl)}
+          />
+        ) : (
+          item.type === 'image' && (
+            <View style={styles.missingImageContainer}>
+              <Ionicons name="image-outline" size={40} color={COLORS.textMuted} />
+              <Text style={styles.missingImageText}>Image not available</Text>
+            </View>
+          )
         )}
         
         <View style={styles.cardContent}>
@@ -297,6 +323,22 @@ const styles = StyleSheet.create({
     height: 150,
     borderRadius: BORDER_RADIUS.sm,
     marginBottom: SPACING.md,
+  },
+  missingImageContainer: {
+    width: '100%',
+    height: 150,
+    borderRadius: BORDER_RADIUS.sm,
+    marginBottom: SPACING.md,
+    backgroundColor: COLORS.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  missingImageText: {
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textMuted,
+    marginTop: SPACING.sm,
   },
   cardContent: {
     flex: 1,

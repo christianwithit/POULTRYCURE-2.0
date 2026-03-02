@@ -1,7 +1,31 @@
 // contexts/__tests__/DiagnosisContext.test.tsx
 
+// Mock environment variables and supabase before any imports
+process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
+process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'test-anon-key';
+
+// Mock supabase module
+jest.mock('../../lib/supabase', () => ({
+  supabase: {
+    auth: {
+      onAuthStateChange: jest.fn(() => ({
+        data: { subscription: { unsubscribe: jest.fn() } }
+      }))
+    },
+    channel: jest.fn(),
+    removeChannel: jest.fn(),
+  }
+}));
+
+// Mock NetInfo native module
+jest.mock('@react-native-community/netinfo', () => ({
+  fetch: jest.fn(() => Promise.resolve({ isConnected: true })),
+  addEventListener: jest.fn(() => jest.fn()),
+  useNetInfo: jest.fn(() => ({ isConnected: true })),
+}));
+
+import { render, act, waitFor, fireEvent } from '@testing-library/react';
 import React, { ReactNode } from 'react';
-import { render, act, waitFor } from '@testing-library/react-native';
 import { DiagnosisProvider, useDiagnosis } from '../DiagnosisContext';
 import { AuthContext } from '../AuthContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -12,9 +36,7 @@ import { DiagnosisResult } from '../../types/types';
 
 // Mock dependencies
 jest.mock('@react-native-async-storage/async-storage');
-jest.mock('@react-native-community/netinfo');
 jest.mock('../../services/supabase-diagnoses');
-jest.mock('../../lib/supabase');
 jest.mock('expo-crypto', () => ({
   randomUUID: jest.fn(() => 'test-uuid-12345'),
 }));
@@ -48,7 +70,15 @@ const mockDiagnosis: DiagnosisResult = {
 // Test wrapper component
 const TestWrapper: React.FC<{ children: ReactNode; user?: any }> = ({ children, user = mockUser }) => {
   return (
-    <AuthContext.Provider value={{ user, signIn: jest.fn(), signOut: jest.fn() }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      isAuthenticated: !!user,
+      isLoading: false,
+      login: jest.fn(),
+      signup: jest.fn(),
+      logout: jest.fn(),
+      refreshUser: jest.fn()
+    }}>
       <DiagnosisProvider>{children}</DiagnosisProvider>
     </AuthContext.Provider>
   );
@@ -73,39 +103,51 @@ const TestComponent: React.FC = () => {
   } = useDiagnosis();
 
   return (
-    <>
-      <test-testid="history-count">{history.length}</test-testid>
-      <test-testid="is-loading">{isLoading.toString()}</test-testid>
-      <test-testid="is-syncing">{isSyncing.toString()}</test-testid>
-      <test-testid="is-online">{isOnline.toString()}</test-testid>
-      <test-testid="is-realtime-connected">{isRealtimeConnected.toString()}</test-testid>
-      <test-testid="sync-error">{syncError || 'none'}</test-testid>
-      <test-testid="last-synced-at">{lastSyncedAt?.toISOString() || 'never'}</test-testid>
+    <div>
+      <div data-testid="history-count">{history.length}</div>
+      <div data-testid="is-loading">{isLoading.toString()}</div>
+      <div data-testid="is-syncing">{isSyncing.toString()}</div>
+      <div data-testid="is-online">{isOnline.toString()}</div>
+      <div data-testid="is-realtime-connected">{isRealtimeConnected.toString()}</div>
+      <div data-testid="sync-error">{syncError || 'none'}</div>
+      <div data-testid="last-synced-at">{lastSyncedAt?.toISOString() || 'never'}</div>
       <button
-        test-id="add-diagnosis"
-        onPress={() => addDiagnosis(mockDiagnosis)}
-      />
+        data-testid="add-diagnosis"
+        onClick={() => addDiagnosis(mockDiagnosis)}
+      >
+        Add Diagnosis
+      </button>
       <button
-        test-id="clear-history"
-        onPress={() => clearHistory()}
-      />
+        data-testid="clear-history"
+        onClick={() => clearHistory()}
+      >
+        Clear History
+      </button>
       <button
-        test-id="delete-diagnosis"
-        onPress={() => deleteDiagnosis(mockDiagnosis.id)}
-      />
+        data-testid="delete-diagnosis"
+        onClick={() => deleteDiagnosis(mockDiagnosis.id)}
+      >
+        Delete Diagnosis
+      </button>
       <button
-        test-id="refresh-history"
-        onPress={() => refreshHistory()}
-      />
+        data-testid="refresh-history"
+        onClick={() => refreshHistory()}
+      >
+        Refresh History
+      </button>
       <button
-        test-id="clear-sync-error"
-        onPress={() => clearSyncError()}
-      />
+        data-testid="clear-sync-error"
+        onClick={() => clearSyncError()}
+      >
+        Clear Sync Error
+      </button>
       <button
-        test-id="clear-pending-queue"
-        onPress={() => clearPendingQueue()}
-      />
-    </>
+        data-testid="clear-pending-queue"
+        onClick={() => clearPendingQueue()}
+      >
+        Clear Pending Queue
+      </button>
+    </div>
   );
 };
 
@@ -184,7 +226,7 @@ describe('DiagnosisContext', () => {
       const addButton = getByTestId('add-diagnosis');
       
       await act(async () => {
-        addButton.props.onPress();
+        fireEvent.click(addButton);
       });
 
       await waitFor(() => {
@@ -209,7 +251,7 @@ describe('DiagnosisContext', () => {
       const addButton = getByTestId('add-diagnosis');
       
       await act(async () => {
-        addButton.props.onPress();
+        fireEvent.click(addButton);
       });
 
       await waitFor(() => {
@@ -237,7 +279,7 @@ describe('DiagnosisContext', () => {
       const deleteButton = getByTestId('delete-diagnosis');
       
       await act(async () => {
-        deleteButton.props.onPress();
+        fireEvent.click(deleteButton);
       });
 
       await waitFor(() => {
@@ -262,7 +304,7 @@ describe('DiagnosisContext', () => {
       const clearButton = getByTestId('clear-history');
       
       await act(async () => {
-        clearButton.props.onPress();
+        fireEvent.click(clearButton);
       });
 
       await waitFor(() => {
@@ -283,7 +325,7 @@ describe('DiagnosisContext', () => {
       const refreshButton = getByTestId('refresh-history');
       
       await act(async () => {
-        refreshButton.props.onPress();
+        fireEvent.click(refreshButton);
       });
 
       await waitFor(() => {
@@ -306,7 +348,7 @@ describe('DiagnosisContext', () => {
       const addButton = getByTestId('add-diagnosis');
       
       await act(async () => {
-        addButton.props.onPress();
+        fireEvent.click(addButton);
       });
 
       await waitFor(() => {
@@ -332,13 +374,13 @@ describe('DiagnosisContext', () => {
       const addButton = getByTestId('add-diagnosis');
       
       await act(async () => {
-        addButton.props.onPress();
+        fireEvent.click(addButton);
       });
 
       const clearErrorButton = getByTestId('clear-sync-error');
       
       await act(async () => {
-        clearErrorButton.props.onPress();
+        fireEvent.click(clearErrorButton);
       });
 
       await waitFor(() => {
@@ -358,7 +400,7 @@ describe('DiagnosisContext', () => {
       const clearQueueButton = getByTestId('clear-pending-queue');
       
       await act(async () => {
-        clearQueueButton.props.onPress();
+        fireEvent.click(clearQueueButton);
       });
 
       await waitFor(() => {
@@ -369,7 +411,7 @@ describe('DiagnosisContext', () => {
 
   describe('Real-time Connection', () => {
     it('should establish real-time connection when user is online', async () => {
-      render(
+      const { getByTestId } = render(
         <TestWrapper>
           <TestComponent />
         </TestWrapper>

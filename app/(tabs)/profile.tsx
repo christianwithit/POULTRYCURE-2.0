@@ -1,14 +1,16 @@
 // app/(tabs)/profile.tsx
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import SafeAreaContainer from '../../components/SafeAreaContainer';
 import { BORDER_RADIUS, COLORS, FONT_SIZES, SHADOWS, SPACING } from '../../constants/theme';
 import { useAuth } from '../../contexts/AuthContext';
+import { PhotoUpload } from '../../components/profile/PhotoUpload';
 
 export default function ProfileScreen() {
   const { user, logout, isLoading, refreshUser } = useAuth();
+  const [photo, setPhoto] = useState<string | null>(null);
 
   const handleEditProfile = () => {
     router.push('/profile/edit');
@@ -17,6 +19,15 @@ export default function ProfileScreen() {
   const handleChangePassword = () => {
     router.push('/profile/change-password');
   };
+  const handlePhotoUpdate = async (photoUrl: string) => {
+    // Update user profile photo in the backend
+    console.log('📸 Updating profile photo:', photoUrl);
+    // TODO: Update user profile in Supabase
+    // For now, just update local state
+    setPhoto(photoUrl);
+    await refreshUser();
+  };
+
   const handleLogout = () => {
     Alert.alert(
       'Log Out',
@@ -71,19 +82,13 @@ export default function ProfileScreen() {
     <SafeAreaContainer edges={['top', 'left', 'right']} backgroundColor={COLORS.background}>
       <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.avatarContainer} onPress={handleEditProfile}>
-          {user.profilePhoto ? (
-            <View style={styles.profileImageContainer}>
-              {/* Profile image would be displayed here when implemented */}
-              <Ionicons name="person" size={60} color={COLORS.white} />
-            </View>
-          ) : (
-            <Ionicons name="person" size={60} color={COLORS.white} />
-          )}
-          <View style={styles.editIconContainer}>
-            <Ionicons name="camera" size={16} color={COLORS.white} />
-          </View>
-        </TouchableOpacity>
+        <PhotoUpload
+          currentPhoto={user.profilePhoto || photo || undefined}
+          onPhotoUpdate={handlePhotoUpdate}
+          userId={user.id}
+          size="large"
+          editable={true}
+        />
         <Text style={styles.name}>{user.name}</Text>
         <Text style={styles.email}>{user.email}</Text>
         <Text style={styles.memberSince}>
