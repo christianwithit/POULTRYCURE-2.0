@@ -11,6 +11,7 @@ import { PhotoUpload } from '../../components/profile/PhotoUpload';
 export default function ProfileScreen() {
   const { user, logout, isLoading, refreshUser } = useAuth();
   const [photo, setPhoto] = useState<string | null>(null);
+  const [debugTapCount, setDebugTapCount] = useState(0);
 
   const handleEditProfile = () => {
     router.push('/profile/edit');
@@ -51,6 +52,31 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const handleVersionTap = () => {
+    const newCount = debugTapCount + 1;
+    setDebugTapCount(newCount);
+    
+    if (newCount === 5) {
+      setDebugTapCount(0);
+      Alert.alert(
+        '🔧 Developer Mode',
+        'Edge Function Test tools unlocked!',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'Open Debug', 
+            onPress: () => router.push('/debug/edge-test')
+          }
+        ]
+      );
+    }
+    
+    // Reset after 2 seconds if not reaching 5 taps
+    setTimeout(() => {
+      setDebugTapCount(0);
+    }, 2000);
   };
 
   if (isLoading) {
@@ -161,7 +187,9 @@ export default function ProfileScreen() {
         <Text style={styles.logoutText}>Log Out</Text>
       </TouchableOpacity>
 
-      <Text style={styles.version}>Version 1.0.0</Text>
+      <TouchableOpacity onPress={handleVersionTap}>
+        <Text style={styles.version}>Version 1.0.0</Text>
+      </TouchableOpacity>
       </ScrollView>
     </SafeAreaContainer>
   );

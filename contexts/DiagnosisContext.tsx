@@ -16,6 +16,8 @@ import NetInfo from '@react-native-community/netinfo';
 
 import { RealtimeChannel } from '@supabase/supabase-js';
 
+import { diagnoseWithEdgeFunction, getUsageInfo, canMakeDiagnosisRequest } from '../utils/edgeFunctionClient';
+
 interface DiagnosisContextType {
 
   history: DiagnosisResult[];
@@ -48,6 +50,11 @@ interface DiagnosisContextType {
   addImageDiagnosis: (imageUri: string, analysisResult: any) => Promise<void>;
   deleteDiagnosisImage: (diagnosisId: string) => Promise<void>;
   updateDiagnosisImage: (diagnosisId: string, imageUri: string) => Promise<void>;
+
+  // Edge function functions
+  diagnoseWithEdgeFunction: (type: 'text' | 'image', input: string, symptoms?: string[], imageData?: string) => Promise<any>;
+  getUsageInfo: () => Promise<any>;
+  canMakeDiagnosisRequest: () => Promise<{ allowed: boolean; usage?: any }>;
 
 }
 
@@ -1033,6 +1040,81 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
   };
 
+  // Edge Function methods
+  const diagnoseWithEdgeFunctionMethod = async (type: 'text' | 'image', input: string, symptoms?: string[], imageData?: string) => {
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      console.log('🤖 Using Edge Function for diagnosis...');
+      
+      const result = await diagnoseWithEdgeFunction({
+        type,
+        input,
+        userId: user.id,
+        symptoms,
+        imageData
+      });
+
+      if (result.success && result.diagnosis) {
+        // Convert edge function result to DiagnosisResult format
+        const diagnosisResult: DiagnosisResult = {
+          id: `edge-${Date.now()}`,
+          type: type === 'image' ? 'image' : 'symptom',
+          input: input,
+          diagnosis: result.diagnosis.disease,
+          confidence: result.diagnosis.confidence,
+          recommendations: result.diagnosis.recommendations,
+          treatment: result.diagnosis.treatment,
+          prevention: result.diagnosis.prevention,
+          severity: result.diagnosis.severity === 'medium' ? 'moderate' : result.diagnosis.severity,
+          date: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+
+        // Save the diagnosis
+        await addDiagnosis(diagnosisResult);
+        
+        console.log('✅ Edge Function diagnosis completed and saved');
+        return result.diagnosis;
+      } else {
+        throw new Error(result.error || 'Edge function diagnosis failed');
+      }
+    } catch (error) {
+      console.error('❌ Edge Function diagnosis error:', error);
+      throw error;
+    }
+  };
+
+  const getUsageInfoMethod = async () => {
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+
+    try {
+      const usage = await getUsageInfo(user.id);
+      return usage;
+    } catch (error) {
+      console.error('❌ Error getting usage info:', error);
+      throw error;
+    }
+  };
+
+  const canMakeDiagnosisRequestMethod = async () => {
+    if (!user) {
+      return { allowed: false };
+    }
+
+    try {
+      const canMake = await canMakeDiagnosisRequest(user.id);
+      return canMake;
+    } catch (error) {
+      console.error('❌ Error checking request limits:', error);
+      return { allowed: false };
+    }
+  };
+
 
 
   return (
@@ -1070,6 +1152,10 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
         addImageDiagnosis,
         deleteDiagnosisImage,
         updateDiagnosisImage,
+
+        diagnoseWithEdgeFunction: diagnoseWithEdgeFunctionMethod,
+        getUsageInfo: getUsageInfoMethod,
+        canMakeDiagnosisRequest: canMakeDiagnosisRequestMethod,
 
       }}
 

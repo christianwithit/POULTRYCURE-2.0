@@ -258,7 +258,7 @@ export default function DiseaseListView({
         </Text>
         {searchQuery && (
           <Text style={styles.searchInfo}>
-            Searching for: "{searchQuery}"
+            Searching for: &quot;{searchQuery}&quot;
           </Text>
         )}
       </View>

@@ -113,7 +113,9 @@ const TestComponent: React.FC = () => {
       <div data-testid="last-synced-at">{lastSyncedAt?.toISOString() || 'never'}</div>
       <button
         data-testid="add-diagnosis"
-        onClick={() => addDiagnosis(mockDiagnosis)}
+        onClick={async () => {
+          await addDiagnosis(mockDiagnosis);
+        }}
       >
         Add Diagnosis
       </button>
@@ -169,13 +171,49 @@ describe('DiagnosisContext', () => {
     
     // Mock Supabase realtime
     const mockChannel = {
+      topic: 'diagnoses_changes',
+      params: {},
+      socket: null,
+      bindings: [],
+      state: 'SUBSCRIBED',
+      joinPush: null,
       on: jest.fn().mockReturnThis(),
+      off: jest.fn().mockReturnThis(),
       subscribe: jest.fn().mockImplementation((callback) => {
         callback('SUBSCRIBED');
         return mockChannel;
       }),
+      unsubscribe: jest.fn().mockResolvedValue(undefined),
+      push: jest.fn(),
+      leave: jest.fn(),
+      trigger: jest.fn(),
+      send: jest.fn(),
+      recv: jest.fn(),
+      filter: jest.fn(),
+      map: jest.fn(),
+      join: jest.fn(),
+      leavePush: null,
+      rejoin: jest.fn(),
+      reset: jest.fn(),
+      destroy: jest.fn(),
+      isJoined: jest.fn(),
+      isJoining: jest.fn(),
+      isLeaving: jest.fn(),
+      isClosed: jest.fn(),
+      isErrored: jest.fn(),
+      isSubscribed: jest.fn(),
+      presenceState: jest.fn(),
+      presence: jest.fn(),
+      track: jest.fn(),
+      untrack: jest.fn(),
+      onMessage: jest.fn(),
+      onClose: jest.fn(),
+      onError: jest.fn(),
+      onJoin: jest.fn(),
+      onLeave: jest.fn(),
+      onAccessDenied: jest.fn(),
     };
-    mockSupabase.channel.mockReturnValue(mockChannel);
+    mockSupabase.channel.mockReturnValue(mockChannel as any);
     mockSupabase.removeChannel.mockResolvedValue();
   });
 
@@ -238,7 +276,12 @@ describe('DiagnosisContext', () => {
     it('should queue diagnosis when offline', async () => {
       // Mock offline state
       mockNetInfo.addEventListener.mockImplementation((callback) => {
-        callback({ isConnected: false });
+        callback({ 
+          isConnected: false,
+          type: 'none' as any,
+          isInternetReachable: false,
+          details: { connectionType: 'none' } as any
+        });
         return jest.fn();
       });
 
@@ -426,7 +469,12 @@ describe('DiagnosisContext', () => {
     it('should disconnect real-time when user is offline', async () => {
       // Mock offline state
       mockNetInfo.addEventListener.mockImplementation((callback) => {
-        callback({ isConnected: false });
+        callback({ 
+          isConnected: false,
+          type: 'none' as any,
+          isInternetReachable: false,
+          details: { connectionType: 'none' } as any
+        });
         return jest.fn();
       });
 

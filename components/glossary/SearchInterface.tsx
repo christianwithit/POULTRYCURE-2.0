@@ -440,9 +440,9 @@ const SearchInterface = React.memo(function SearchInterface({
             Try searching for:
           </Text>
           <View style={styles.suggestionsList}>
-            <Text style={styles.suggestionExample}>• Disease names (e.g., "Newcastle Disease")</Text>
-            <Text style={styles.suggestionExample}>• Symptoms (e.g., "respiratory distress")</Text>
-            <Text style={styles.suggestionExample}>• Keywords (e.g., "viral", "bacterial")</Text>
+            <Text style={styles.suggestionExample}>• Disease names (e.g., &quot;Newcastle Disease&quot;)</Text>
+            <Text style={styles.suggestionExample}>• Symptoms (e.g., &quot;respiratory distress&quot;)</Text>
+            <Text style={styles.suggestionExample}>• Keywords (e.g., &quot;viral&quot;, &quot;bacterial&quot;)</Text>
           </View>
         </View>
       );

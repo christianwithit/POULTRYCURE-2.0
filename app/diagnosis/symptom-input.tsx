@@ -35,7 +35,7 @@ export default function SymptomInput() {
   const [symptoms, setSymptoms] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  const { addDiagnosis } = useDiagnosis();
+  const { addDiagnosis, diagnoseWithEdgeFunction } = useDiagnosis();
 
   const addSymptomTag = (symptom: string) => {
     const currentText = symptoms.trim();
@@ -65,23 +65,34 @@ export default function SymptomInput() {
     setIsLoading(true);
 
     try {
-      const response = await DiagnosisAPI.analyzeSymptoms(trimmedSymptoms);
+      // Use edge function for diagnosis
+      const edgeResult = await diagnoseWithEdgeFunction(
+        'text',
+        trimmedSymptoms,
+        trimmedSymptoms.split(',').map(s => s.trim()).filter(s => s)
+      );
 
-      if (!response.success || !response.data) {
-        throw new Error(response.error || 'Analysis failed');
+      if (!edgeResult) {
+        throw new Error('Edge function diagnosis failed');
       }
 
-      await addDiagnosis(response.data);
-
-      router.push({
-        pathname: '/diagnosis/result',
-        params: { diagnosisId: response.data.id },
-      });
+      // The edge function already saves the diagnosis, so we just need to navigate
+      Alert.alert(
+        '✅ Analysis Complete',
+        `Diagnosis: ${edgeResult.disease}\nConfidence: ${edgeResult.confidence}%\n\nView full details?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          { 
+            text: 'View Details', 
+            onPress: () => router.push('/diagnosis/result')
+          }
+        ]
+      );
     } catch (error) {
       console.error('Diagnosis error:', error);
       Alert.alert(
-        'Analysis Failed',
-        'Failed to analyze symptoms. Please check your connection and try again.',
+        '❌ Analysis Failed',
+        error instanceof Error ? error.message : 'Failed to analyze symptoms. Please try again.',
         [{ text: 'OK' }]
       );
     } finally {
