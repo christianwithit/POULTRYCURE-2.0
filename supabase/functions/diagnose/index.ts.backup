@@ -1,0 +1,400 @@
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { GoogleGenerativeAI } from 'https://esm.sh/@google/generative-ai@0.1.3'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+interface DiagnosisRequest {
+  type: 'text' | 'image'
+  input: string
+  userId: string
+  symptoms?: string[]
+  imageData?: string
+}
+
+interface DiagnosisResponse {
+  success: boolean
+  diagnosis?: {
+    disease: string
+    confidence: number
+    severity: 'low' | 'medium' | 'high'
+    recommendations: string[]
+    treatment: string
+    prevention: string
+  }
+  error?: string
+  usage?: {
+    requestsToday: number
+    requestsLimit: number
+    resetTime: string
+  }
+}
+
+serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+    // Get Gemini API key from secrets
+    const geminiApiKey = Deno.env.get('GEMINI_API_KEY')
+    if (!geminiApiKey) {
+      throw new Error('Gemini API key not configured')
+    }
+
+    // Parse request body
+    const body: DiagnosisRequest = await req.json()
+    const { type, input, userId, symptoms, imageData } = body
+
+    // Validate request
+    if (!type || !input || !userId) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Missing required fields: type, input, userId' 
+        }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Check rate limits
+    const usageCheck = await checkRateLimits(supabase, userId)
+    if (!usageCheck.allowed) {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Rate limit exceeded',
+          usage: usageCheck.usage
+        }),
+        { 
+          status: 429, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Initialize Gemini AI
+    const genAI = new GoogleGenerativeAI(geminiApiKey)
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' })
+
+    let diagnosisResult
+    let prompt
+
+    if (type === 'text') {
+      // Text-based diagnosis
+      prompt = createTextPrompt(input, symptoms)
+      const result = await model.generateContent(prompt)
+      const response = await result.response
+      const text = response.text()
+      
+      diagnosisResult = parseDiagnosisResponse(text)
+    } else if (type === 'image') {
+      // Image-based diagnosis
+      if (!imageData) {
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: 'Image data required for image-based diagnosis' 
+          }),
+          { 
+            status: 400, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        )
+      }
+
+      prompt = createImagePrompt(input)
+      const imageParts = [
+        { inlineData: { data: imageData, mimeType: 'image/jpeg' } }
+      ]
+      
+      const result = await model.generateContent([prompt, ...imageParts])
+      const response = await result.response
+      const text = response.text()
+      
+      diagnosisResult = parseDiagnosisResponse(text)
+    } else {
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: 'Invalid diagnosis type. Must be "text" or "image"' 
+        }),
+        { 
+          status: 400, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      )
+    }
+
+    // Update usage tracking
+    await updateUsageTracking(supabase, userId)
+
+    // Log the diagnosis request for analytics
+    await logDiagnosisRequest(supabase, {
+      userId,
+      type,
+      success: true,
+      responseTime: Date.now()
+    })
+
+    const response: DiagnosisResponse = {
+      success: true,
+      diagnosis: diagnosisResult,
+      usage: usageCheck.usage
+    }
+
+    return new Response(
+      JSON.stringify(response),
+      { 
+        status: 200, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
+    )
+
+  } catch (error) {
+    console.error('Diagnosis function error:', error)
+    
+    // Log error for monitoring
+    try {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+      const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+      const supabase = createClient(supabaseUrl, supabaseServiceKey)
+      
+      await logError(supabase, {
+        error: error.message,
+        stack: error.stack,
+        timestamp: new Date().toISOString()
+      })
+    } catch (logError) {
+      console.error('Failed to log error:', logError)
+    }
+
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        error: 'Internal server error during diagnosis processing' 
+      }),
+      { 
+        status: 500, 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
+    )
+  }
+})
+
+async function checkRateLimits(supabase: any, userId: string) {
+  const today = new Date().toISOString().split('T')[0]
+  
+  // Get user's current usage
+  const { data: usage, error } = await supabase
+    .from('usage_tracking')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .single()
+
+  if (error && error.code !== 'PGRST116') {
+    console.error('Error checking usage:', error)
+  }
+
+  const requestsToday = usage?.request_count || 0
+  const requestsLimit = 50 // Free tier limit
+  const allowed = requestsToday < requestsLimit
+
+  // Calculate reset time (next day at midnight UTC)
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  tomorrow.setUTCHours(0, 0, 0, 0)
+  const resetTime = tomorrow.toISOString()
+
+  return {
+    allowed,
+    usage: {
+      requestsToday,
+      requestsLimit,
+      resetTime
+    }
+  }
+}
+
+async function updateUsageTracking(supabase: any, userId: string) {
+  const today = new Date().toISOString().split('T')[0]
+  
+  const { data: existingUsage } = await supabase
+    .from('usage_tracking')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('date', today)
+    .single()
+
+  if (existingUsage) {
+    // Increment existing usage
+    await supabase
+      .from('usage_tracking')
+      .update({ 
+        request_count: existingUsage.request_count + 1,
+        last_request: new Date().toISOString()
+      })
+      .eq('user_id', userId)
+      .eq('date', today)
+  } else {
+    // Create new usage record
+    await supabase
+      .from('usage_tracking')
+      .insert({
+        user_id: userId,
+        date: today,
+        request_count: 1,
+        last_request: new Date().toISOString()
+      })
+  }
+}
+
+function createTextPrompt(symptoms: string, additionalSymptoms?: string[]): string {
+  const allSymptoms = additionalSymptoms 
+    ? `${symptoms}. Additional symptoms: ${additionalSymptoms.join(', ')}`
+    : symptoms
+
+  return `As a veterinary AI specializing in poultry diseases, analyze the following symptoms and provide a detailed diagnosis:
+
+Symptoms: ${allSymptoms}
+
+Please provide a structured response in the following JSON format:
+{
+  "disease": "Name of the most likely disease",
+  "confidence": 85,
+  "severity": "high|medium|low",
+  "recommendations": [
+    "Immediate action 1",
+    "Immediate action 2",
+    "Follow-up action 1"
+  ],
+  "treatment": "Detailed treatment instructions",
+  "prevention": "Prevention measures for the future"
+}
+
+Consider common poultry diseases such as:
+- Newcastle disease
+- Avian influenza
+- Fowl pox
+- Coccidiosis
+- Salmonellosis
+- Marek's disease
+- Infectious bursal disease
+- Mycoplasmosis
+
+Provide specific, actionable advice for poultry farmers.`
+}
+
+function createImagePrompt(description: string): string {
+  return `As a veterinary AI specializing in poultry diseases, analyze this poultry image and the provided description:
+
+Description: ${description}
+
+Please provide a structured response in the following JSON format:
+{
+  "disease": "Name of the most likely disease",
+  "confidence": 85,
+  "severity": "high|medium|low",
+  "recommendations": [
+    "Immediate action 1",
+    "Immediate action 2", 
+    "Follow-up action 1"
+  ],
+  "treatment": "Detailed treatment instructions",
+  "prevention": "Prevention measures for the future"
+}
+
+Look for visual signs of common poultry diseases such as:
+- Respiratory symptoms (discharge, sneezing)
+- Skin lesions (pox, wounds)
+- Eye problems (swelling, discharge)
+- Digestive issues (diarrhea, vent problems)
+- Behavioral changes (lethargy, isolation)
+- Physical abnormalities (swellings, deformities)
+
+Provide specific, actionable advice for poultry farmers.`
+}
+
+function parseDiagnosisResponse(text: string) {
+  try {
+    // Try to extract JSON from the response
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0])
+      
+      // Validate and sanitize the response
+      return {
+        disease: parsed.disease || 'Unknown disease',
+        confidence: Math.min(100, Math.max(0, parsed.confidence || 75)),
+        severity: ['low', 'medium', 'high'].includes(parsed.severity) ? parsed.severity : 'medium',
+        recommendations: Array.isArray(parsed.recommendations) ? parsed.recommendations : [
+          'Isolate affected birds',
+          'Consult veterinarian',
+          'Monitor flock closely'
+        ],
+        treatment: parsed.treatment || 'Consult veterinarian for proper diagnosis and treatment',
+        prevention: parsed.prevention || 'Maintain proper biosecurity and vaccination protocols'
+      }
+    }
+  } catch (error) {
+    console.error('Error parsing diagnosis response:', error)
+  }
+
+  // Fallback response if parsing fails
+  return {
+    disease: 'Analysis completed',
+    confidence: 75,
+    severity: 'medium',
+    recommendations: [
+      'Isolate affected birds immediately',
+      'Consult veterinarian for proper diagnosis',
+      'Monitor the rest of the flock closely'
+    ],
+    treatment: 'Please consult with a veterinarian for specific treatment recommendations based on the observed symptoms.',
+    prevention: 'Maintain proper biosecurity measures, regular vaccination schedules, and clean living conditions for your poultry.'
+  }
+}
+
+async function logDiagnosisRequest(supabase: any, data: any) {
+  try {
+    await supabase
+      .from('diagnosis_logs')
+      .insert({
+        user_id: data.userId,
+        type: data.type,
+        success: data.success,
+        response_time: data.responseTime,
+        timestamp: new Date().toISOString()
+      })
+  } catch (error) {
+    console.error('Failed to log diagnosis request:', error)
+  }
+}
+
+async function logError(supabase: any, error: any) {
+  try {
+    await supabase
+      .from('error_logs')
+      .insert({
+        error: error.error,
+        stack: error.stack,
+        timestamp: error.timestamp,
+        service: 'diagnose-edge-function'
+      })
+  } catch (logError) {
+    console.error('Failed to log error:', logError)
+  }
+}
