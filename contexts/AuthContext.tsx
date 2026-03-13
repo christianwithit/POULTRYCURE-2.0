@@ -1,5 +1,6 @@
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
+import { notificationService } from '../services/notificationService';
 import { supabaseAuthService } from '../services/supabase-auth';
 import { User } from '../types/types';
 import { ErrorHandler, RetryHandler } from '../utils/errorHandling';
@@ -89,8 +90,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       
       if (result.success && result.user) {
         setUser(result.user);
-        // Initialize notification service after successful login
-        await notificationService.initialize(result.user.id);
+        // Initialize notification service after successful login (non-blocking)
+        notificationService.initialize(result.user.id).catch(error => {
+          console.warn('Notification service initialization failed:', error);
+        });
       } else {
         const error = new Error(result.error || 'Login failed');
         const appError = ErrorHandler.mapError(error);
@@ -119,8 +122,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       
       if (result.success && result.user) {
         setUser(result.user);
-        // Initialize notification service after successful signup
-        await notificationService.initialize(result.user.id);
+        // Initialize notification service after successful signup (non-blocking)
+        notificationService.initialize(result.user.id).catch(error => {
+          console.warn('Notification service initialization failed:', error);
+        });
       } else {
         const error = new Error(result.error || 'Signup failed');
         const appError = ErrorHandler.mapError(error);

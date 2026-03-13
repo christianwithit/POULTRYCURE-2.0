@@ -229,17 +229,22 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       return;
     }
 
-    // Setup real-time subscription
+    // Setup real-time subscription with debouncing
     const setupRealtimeSubscription = async () => {
       try {
         // Clean up existing subscription
         if (realtimeChannelRef.current) {
           supabase.removeChannel(realtimeChannelRef.current);
+          realtimeChannelRef.current = null;
+          setIsRealtimeConnected(false);
         }
+
+        // Add small delay to prevent rapid reconnections
+        await new Promise(resolve => setTimeout(resolve, 500));
 
         // Create new subscription for user's diagnoses
         const channel = supabase
-          .channel('diagnoses_changes')
+          .channel(`diagnoses_changes_${user.id}`)
           .on(
             'postgres_changes',
             {
@@ -253,6 +258,10 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
           .subscribe((status: any) => {
             console.log('Realtime subscription status:', status);
             setIsRealtimeConnected(status === 'SUBSCRIBED');
+            
+            if (status === 'CHANNEL_ERROR') {
+              console.log('🔄 Realtime channel error, will retry...');
+            }
           });
 
         realtimeChannelRef.current = channel;
