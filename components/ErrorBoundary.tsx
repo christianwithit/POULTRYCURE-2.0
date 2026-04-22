@@ -1,10 +1,10 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { BORDER_RADIUS, COLORS, FONT_SIZES, SPACING } from "../constants/theme";
 
@@ -172,7 +172,7 @@ const styles = StyleSheet.create({
   },
   stackText: {
     fontSize: FONT_SIZES.xs,
-    color: COLORS.textSecondary,
+    color: COLORS.textMuted,
     fontFamily: "monospace",
   },
   helpBox: {
