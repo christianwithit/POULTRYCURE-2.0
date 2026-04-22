@@ -15,9 +15,6 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyCwAud8om_isV8yPW15DeS-_bOiudp-NzA"
       }
     },
     "production": {

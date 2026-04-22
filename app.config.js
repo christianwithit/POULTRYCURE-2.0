@@ -9,28 +9,27 @@ export default {
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
     ios: {
-      supportsTablet: true
+      supportsTablet: true,
     },
     android: {
       adaptiveIcon: {
         backgroundColor: "#E6F4FE",
         foregroundImage: "./assets/images/android-icon-foreground.png",
         backgroundImage: "./assets/images/android-icon-background.png",
-        monochromeImage: "./assets/images/android-icon-monochrome.png"
+        monochromeImage: "./assets/images/android-icon-monochrome.png",
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
-      package: "com.christianwithit.PoultryCure"
+      package: "com.christianwithit.PoultryCure",
     },
     web: {
       output: "static",
-      favicon: "./assets/images/favicon.png"
+      favicon: "./assets/images/favicon.png",
     },
     plugins: [
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-notifications",
       [
         "expo-splash-screen",
         {
@@ -39,22 +38,22 @@ export default {
           resizeMode: "contain",
           backgroundColor: "#ffffff",
           dark: {
-            backgroundColor: "#000000"
-          }
-        }
-      ]
+            backgroundColor: "#000000",
+          },
+        },
+      ],
     ],
     experiments: {
       typedRoutes: true,
-      reactCompiler: true
+      reactCompiler: true,
     },
     extra: {
       router: {},
       eas: {
-        projectId: "07433470-772f-4c90-99d7-67d707480f2c"
+        projectId: "07433470-772f-4c90-99d7-67d707480f2c",
       },
       // This will read from environment variables during build
-      geminiApiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY
-    }
-  }
+      geminiApiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY,
+    },
+  },
 };

@@ -1,24 +1,35 @@
 // services/gemini-client.ts
-import { GenerationConfig, GenerativeModel, GoogleGenerativeAI } from '@google/generative-ai';
-import Constants from 'expo-constants';
-import { DiseaseInfo } from '../types/types';
+import {
+    GenerationConfig,
+    GenerativeModel,
+    GoogleGenerativeAI,
+} from "@google/generative-ai";
+import Constants from "expo-constants";
+import { DiseaseInfo } from "../types/types";
 
 export interface GeminiConfig {
   apiKey: string;
-  model: 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-2.0-flash' | 'gemini-flash-latest' | 'gemini-pro-latest';
+  model:
+    | "gemini-2.5-flash"
+    | "gemini-2.5-pro"
+    | "gemini-2.0-flash"
+    | "gemini-flash-latest"
+    | "gemini-pro-latest";
   maxTokens: number;
   temperature: number;
   timeout: number;
 }
 
 export interface GeminiResponse {
-  candidates: [{
-    content: {
-      parts: [{ text: string }];
-    };
-    finishReason: string;
-    safetyRatings: any[];
-  }];
+  candidates: [
+    {
+      content: {
+        parts: [{ text: string }];
+      };
+      finishReason: string;
+      safetyRatings: any[];
+    },
+  ];
   usageMetadata: {
     promptTokenCount: number;
     candidatesTokenCount: number;
@@ -30,10 +41,10 @@ export class GeminiAPIError extends Error {
   constructor(
     message: string,
     public code: string,
-    public retryable: boolean = false
+    public retryable: boolean = false,
   ) {
     super(message);
-    this.name = 'GeminiAPIError';
+    this.name = "GeminiAPIError";
   }
 }
 
@@ -45,20 +56,35 @@ export class GeminiClient {
   constructor(config?: Partial<GeminiConfig>) {
     // Load configuration from environment variables with defaults
     // Use Constants.expoConfig.extra for production builds, fallback to process.env for development
-    const apiKey = Constants.expoConfig?.extra?.geminiApiKey || process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
-    
+    const apiKey =
+      Constants.expoConfig?.extra?.geminiApiKey ||
+      process.env.EXPO_PUBLIC_GEMINI_API_KEY ||
+      "";
+
+    // Defensive check for required API key
+    if (!apiKey) {
+      throw new Error(
+        "❌ EXPO_PUBLIC_GEMINI_API_KEY is not defined. " +
+          "Please add it to EAS secrets using: eas secret:create --scope project --name EXPO_PUBLIC_GEMINI_API_KEY --value <your-key>",
+      );
+    }
+
     this.config = {
       apiKey,
-      model: (process.env.EXPO_PUBLIC_GEMINI_MODEL as 'gemini-2.5-flash' | 'gemini-2.5-pro' | 'gemini-2.0-flash' | 'gemini-flash-latest' | 'gemini-pro-latest') || 'gemini-2.5-flash',
-      maxTokens: parseInt(process.env.EXPO_PUBLIC_GEMINI_MAX_TOKENS || '2048'),
+      model:
+        (process.env.EXPO_PUBLIC_GEMINI_MODEL as
+          | "gemini-2.5-flash"
+          | "gemini-2.5-pro"
+          | "gemini-2.0-flash"
+          | "gemini-flash-latest"
+          | "gemini-pro-latest") || "gemini-2.5-flash",
+      maxTokens: parseInt(process.env.EXPO_PUBLIC_GEMINI_MAX_TOKENS || "2048"),
       temperature: 0.7,
-      timeout: parseInt(process.env.EXPO_PUBLIC_GEMINI_TIMEOUT || '30000'),
-      ...config
+      timeout: parseInt(process.env.EXPO_PUBLIC_GEMINI_TIMEOUT || "30000"),
+      ...config,
     };
 
-    if (!this.config.apiKey) {
-      throw new GeminiAPIError('Gemini API key is required', 'MISSING_API_KEY');
-    }
+    console.log("✅ Gemini client initializing with model:", this.config.model);
 
     this.genAI = new GoogleGenerativeAI(this.config.apiKey);
     this.model = this.genAI.getGenerativeModel({ model: this.config.model });
@@ -79,36 +105,42 @@ export class GeminiClient {
       await Promise.race([
         this.model.generateContent({
           contents: [{ role: "user", parts: [{ text: "Hello" }] }],
-          generationConfig
+          generationConfig,
         }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 5000)
-        )
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout")), 5000),
+        ),
       ]);
 
       return true;
     } catch (error: any) {
-      console.error('API key validation failed:', error);
-      
-      if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('403')) {
-        throw new GeminiAPIError('Invalid API key', 'INVALID_API_KEY');
+      console.error("API key validation failed:", error);
+
+      if (
+        error.message?.includes("API_KEY_INVALID") ||
+        error.message?.includes("403")
+      ) {
+        throw new GeminiAPIError("Invalid API key", "INVALID_API_KEY");
       }
-      
-      if (error.message?.includes('Timeout')) {
-        throw new GeminiAPIError('Connection timeout', 'TIMEOUT', true);
+
+      if (error.message?.includes("Timeout")) {
+        throw new GeminiAPIError("Connection timeout", "TIMEOUT", true);
       }
-      
-      throw new GeminiAPIError('Connection failed', 'CONNECTION_ERROR', true);
+
+      throw new GeminiAPIError("Connection failed", "CONNECTION_ERROR", true);
     }
   }
 
   /**
    * Analyze symptoms with disease context
    */
-  async analyzeSymptoms(symptoms: string, context: DiseaseInfo[]): Promise<GeminiResponse> {
+  async analyzeSymptoms(
+    symptoms: string,
+    context: DiseaseInfo[],
+  ): Promise<GeminiResponse> {
     try {
       const prompt = this.buildSymptomsPrompt(symptoms, context);
-      
+
       const generationConfig: GenerationConfig = {
         temperature: this.config.temperature,
         maxOutputTokens: this.config.maxTokens,
@@ -118,16 +150,19 @@ export class GeminiClient {
       const result = await Promise.race([
         this.model.generateContent({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig
+          generationConfig,
         }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), this.config.timeout)
-        )
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Request timeout")),
+            this.config.timeout,
+          ),
+        ),
       ]);
 
       return result as GeminiResponse;
     } catch (error: any) {
-      console.error('Symptom analysis failed:', error);
+      console.error("Symptom analysis failed:", error);
       this.handleApiError(error);
       throw error; // Re-throw after handling
     }
@@ -136,10 +171,14 @@ export class GeminiClient {
   /**
    * Analyze image with optional symptoms and disease context
    */
-  async analyzeImage(imageBase64: string, symptoms?: string, context: DiseaseInfo[] = []): Promise<GeminiResponse> {
+  async analyzeImage(
+    imageBase64: string,
+    symptoms?: string,
+    context: DiseaseInfo[] = [],
+  ): Promise<GeminiResponse> {
     try {
       const prompt = this.buildImagePrompt(symptoms, context);
-      
+
       const generationConfig: GenerationConfig = {
         temperature: this.config.temperature,
         maxOutputTokens: this.config.maxTokens,
@@ -151,24 +190,27 @@ export class GeminiClient {
         {
           inlineData: {
             mimeType: "image/jpeg",
-            data: imageBase64
-          }
-        }
+            data: imageBase64,
+          },
+        },
       ];
 
       const result = await Promise.race([
         this.model.generateContent({
           contents: [{ role: "user", parts }],
-          generationConfig
+          generationConfig,
         }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Request timeout')), this.config.timeout)
-        )
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Request timeout")),
+            this.config.timeout,
+          ),
+        ),
       ]);
 
       return result as GeminiResponse;
     } catch (error: any) {
-      console.error('Image analysis failed:', error);
+      console.error("Image analysis failed:", error);
       this.handleApiError(error);
       throw error; // Re-throw after handling
     }
@@ -177,10 +219,16 @@ export class GeminiClient {
   /**
    * Build prompt for symptom analysis
    */
-  private buildSymptomsPrompt(symptoms: string, context: DiseaseInfo[]): string {
-    const contextText = context.map(disease => 
-      `${disease.name}: ${disease.description}\nSymptoms: ${disease.symptoms.join(', ')}\nTreatment: ${disease.treatment}\nSeverity: ${disease.severity}`
-    ).join('\n\n');
+  private buildSymptomsPrompt(
+    symptoms: string,
+    context: DiseaseInfo[],
+  ): string {
+    const contextText = context
+      .map(
+        (disease) =>
+          `${disease.name}: ${disease.description}\nSymptoms: ${disease.symptoms.join(", ")}\nTreatment: ${disease.treatment}\nSeverity: ${disease.severity}`,
+      )
+      .join("\n\n");
 
     return `You are a poultry disease diagnosis expert. Analyze the following symptoms and provide a diagnosis based on the disease database provided.
 
@@ -206,12 +254,20 @@ Focus on diseases from the provided database. If symptoms don't clearly match an
   /**
    * Build prompt for image analysis
    */
-  private buildImagePrompt(symptoms?: string, context: DiseaseInfo[] = []): string {
-    const contextText = context.map(disease => 
-      `${disease.name}: ${disease.description}\nSymptoms: ${disease.symptoms.join(', ')}\nTreatment: ${disease.treatment}\nSeverity: ${disease.severity}`
-    ).join('\n\n');
+  private buildImagePrompt(
+    symptoms?: string,
+    context: DiseaseInfo[] = [],
+  ): string {
+    const contextText = context
+      .map(
+        (disease) =>
+          `${disease.name}: ${disease.description}\nSymptoms: ${disease.symptoms.join(", ")}\nTreatment: ${disease.treatment}\nSeverity: ${disease.severity}`,
+      )
+      .join("\n\n");
 
-    const symptomsText = symptoms ? `\n\nADDITIONAL SYMPTOMS PROVIDED:\n${symptoms}` : '';
+    const symptomsText = symptoms
+      ? `\n\nADDITIONAL SYMPTOMS PROVIDED:\n${symptoms}`
+      : "";
 
     return `You are a poultry disease diagnosis expert. Analyze the provided image of a poultry bird for signs of disease or health issues.
 
@@ -242,28 +298,43 @@ If the image quality is poor or no clear issues are visible, indicate this with 
    * Handle API errors and convert to appropriate GeminiAPIError
    */
   private handleApiError(error: any): void {
-    if (error.message?.includes('timeout') || error.message?.includes('Request timeout')) {
-      throw new GeminiAPIError('Request timed out', 'TIMEOUT', true);
+    if (
+      error.message?.includes("timeout") ||
+      error.message?.includes("Request timeout")
+    ) {
+      throw new GeminiAPIError("Request timed out", "TIMEOUT", true);
     }
-    
-    if (error.message?.includes('quota') || error.message?.includes('QUOTA_EXCEEDED')) {
-      throw new GeminiAPIError('API quota exceeded', 'QUOTA_EXCEEDED', false);
+
+    if (
+      error.message?.includes("quota") ||
+      error.message?.includes("QUOTA_EXCEEDED")
+    ) {
+      throw new GeminiAPIError("API quota exceeded", "QUOTA_EXCEEDED", false);
     }
-    
-    if (error.message?.includes('rate limit') || error.message?.includes('RATE_LIMIT_EXCEEDED')) {
-      throw new GeminiAPIError('Rate limit exceeded', 'RATE_LIMIT', true);
+
+    if (
+      error.message?.includes("rate limit") ||
+      error.message?.includes("RATE_LIMIT_EXCEEDED")
+    ) {
+      throw new GeminiAPIError("Rate limit exceeded", "RATE_LIMIT", true);
     }
-    
-    if (error.message?.includes('API_KEY_INVALID') || error.message?.includes('403')) {
-      throw new GeminiAPIError('Invalid API key', 'INVALID_API_KEY', false);
+
+    if (
+      error.message?.includes("API_KEY_INVALID") ||
+      error.message?.includes("403")
+    ) {
+      throw new GeminiAPIError("Invalid API key", "INVALID_API_KEY", false);
     }
-    
-    if (error.message?.includes('network') || error.message?.includes('fetch')) {
-      throw new GeminiAPIError('Network error', 'NETWORK_ERROR', true);
+
+    if (
+      error.message?.includes("network") ||
+      error.message?.includes("fetch")
+    ) {
+      throw new GeminiAPIError("Network error", "NETWORK_ERROR", true);
     }
-    
+
     // Generic API error
-    throw new GeminiAPIError('API request failed', 'API_ERROR', true);
+    throw new GeminiAPIError("API request failed", "API_ERROR", true);
   }
 
   /**
@@ -278,7 +349,7 @@ If the image quality is poor or no clear issues are visible, indicate this with 
    */
   updateConfig(newConfig: Partial<GeminiConfig>): void {
     this.config = { ...this.config, ...newConfig };
-    
+
     // Reinitialize client if API key changed
     if (newConfig.apiKey) {
       this.genAI = new GoogleGenerativeAI(this.config.apiKey);

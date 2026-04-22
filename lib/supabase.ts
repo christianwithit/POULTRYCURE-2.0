@@ -1,12 +1,28 @@
-import { createClient } from '@supabase/supabase-js';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('⚠️ Supabase credentials not found in environment variables');
+// Defensive checks for required environment variables
+if (!supabaseUrl) {
+  throw new Error(
+    "❌ EXPO_PUBLIC_SUPABASE_URL is not defined. " +
+      "Please add it to EAS secrets using: eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_URL --value <your-url>",
+  );
 }
+
+if (!supabaseAnonKey) {
+  throw new Error(
+    "❌ EXPO_PUBLIC_SUPABASE_ANON_KEY is not defined. " +
+      "Please add it to EAS secrets using: eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value <your-key>",
+  );
+}
+
+console.log(
+  "✅ Supabase client initializing with URL:",
+  supabaseUrl.substring(0, 30) + "...",
+);
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
