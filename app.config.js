@@ -21,6 +21,12 @@ export default {
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
       package: "com.christianwithit.PoultryCure",
+      permissions: [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+      ],
     },
     web: {
       output: "static",
@@ -30,6 +36,24 @@ export default {
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
+      [
+        "expo-camera",
+        {
+          cameraPermission:
+            "Allow PoultryCure to access your camera to take photos for disease diagnosis.",
+          microphonePermission: false,
+          recordAudioAndroid: false,
+        },
+      ],
+      [
+        "expo-image-picker",
+        {
+          photosPermission:
+            "Allow PoultryCure to access your photos to select images for disease diagnosis.",
+          cameraPermission:
+            "Allow PoultryCure to access your camera to take photos for disease diagnosis.",
+        },
+      ],
       [
         "expo-splash-screen",
         {
@@ -45,7 +69,6 @@ export default {
     ],
     experiments: {
       typedRoutes: true,
-      reactCompiler: true,
     },
     extra: {
       router: {},
