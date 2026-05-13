@@ -1,8 +1,9 @@
 // services/imageService.ts
 
-import * as FileSystem from 'expo-file-system/legacy';
-import * as ImageManipulator from 'expo-image-manipulator';
-import { supabase } from '../lib/supabase';
+import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
+import { Image } from "react-native";
+import { supabase } from "../lib/supabase";
 
 export interface ImageMetadata {
   size: number;
@@ -19,7 +20,7 @@ export interface CompressionOptions {
   maxWidth?: number;
   maxHeight?: number;
   quality?: number;
-  format?: 'jpeg' | 'png' | 'webp';
+  format?: "jpeg" | "png" | "webp";
 }
 
 export interface UploadResult {
@@ -33,7 +34,7 @@ const DEFAULT_COMPRESSION: CompressionOptions = {
   maxWidth: 1920,
   maxHeight: 1080,
   quality: 0.8,
-  format: 'jpeg',
+  format: "jpeg",
 };
 
 // Maximum file size (5MB)
@@ -44,17 +45,19 @@ const MAX_FILE_SIZE = 5 * 1024 * 1024;
  */
 export const compressImage = async (
   uri: string,
-  options: CompressionOptions = DEFAULT_COMPRESSION
+  options: CompressionOptions = DEFAULT_COMPRESSION,
 ): Promise<{ uri: string; metadata: ImageMetadata }> => {
   try {
-    console.log('🗜️ Starting image compression...', uri);
+    console.log("🗜️ Starting image compression...", uri);
 
     // Get original image info
     const fileInfo = await FileSystem.getInfoAsync(uri);
     const originalSize = (fileInfo as any).size || 0;
 
     if (originalSize > MAX_FILE_SIZE) {
-      console.warn(`⚠️ Image size (${originalSize}) exceeds recommended limit (${MAX_FILE_SIZE})`);
+      console.warn(
+        `⚠️ Image size (${originalSize}) exceeds recommended limit (${MAX_FILE_SIZE})`,
+      );
     }
 
     // Get image dimensions
@@ -65,7 +68,7 @@ export const compressImage = async (
       width,
       height,
       options.maxWidth || DEFAULT_COMPRESSION.maxWidth!,
-      options.maxHeight || DEFAULT_COMPRESSION.maxHeight!
+      options.maxHeight || DEFAULT_COMPRESSION.maxHeight!,
     );
 
     // Compress the image
@@ -75,7 +78,7 @@ export const compressImage = async (
       {
         compress: options.quality || DEFAULT_COMPRESSION.quality!,
         format: (options.format || DEFAULT_COMPRESSION.format!) as any,
-      }
+      },
     );
 
     // Get compressed file info
@@ -93,84 +96,90 @@ export const compressImage = async (
       compressionRatio: originalSize > 0 ? compressedSize / originalSize : 1,
     };
 
-    console.log(`✅ Image compressed: ${originalSize} → ${compressedSize} bytes (${((1 - metadata.compressionRatio!) * 100).toFixed(1)}% reduction)`);
+    console.log(
+      `✅ Image compressed: ${originalSize} → ${compressedSize} bytes (${((1 - metadata.compressionRatio!) * 100).toFixed(1)}% reduction)`,
+    );
 
     return { uri: result.uri, metadata };
   } catch (error) {
-    console.error('❌ Failed to compress image:', error);
-    throw new Error('Image compression failed');
+    console.error("❌ Failed to compress image:", error);
+    throw new Error("Image compression failed");
   }
 };
 
 /**
- * Uploads a diagnosis image to Supabase Storage
+ * Uploads a diagnosis image to Supabase Storage using the SDK (base64 → ArrayBuffer).
+ * Returns a long-lived signed URL so it works regardless of bucket visibility.
  */
 export const uploadDiagnosisImage = async (
   uri: string,
   diagnosisId: string,
-  userId: string
+  userId: string,
 ): Promise<UploadResult> => {
   try {
-    console.log('📤 Starting diagnosis image upload...', { diagnosisId, userId });
+    console.log("📤 Starting diagnosis image upload...", {
+      diagnosisId,
+      userId,
+    });
 
-    // Compress the image first
+    // Compress first
     const { uri: compressedUri, metadata } = await compressImage(uri);
 
-    // Generate unique file path
     const fileExt = metadata.format.toLowerCase();
     const fileName = `${Date.now()}.${fileExt}`;
     const filePath = `${userId}/${diagnosisId}/${fileName}`;
 
-    // Read file as base64 for React Native compatibility
+    // Read as base64 then convert to ArrayBuffer for the Supabase SDK
     const base64 = await FileSystem.readAsStringAsync(compressedUri, {
       encoding: FileSystem.EncodingType.Base64,
     });
 
-    // Create FormData for React Native upload
-    const formData = new FormData();
-    formData.append('file', {
-      uri: compressedUri,
-      type: `image/${fileExt}`,
-      name: fileName,
-    } as any);
+    // Clean up compressed temp file
+    FileSystem.deleteAsync(compressedUri, { idempotent: true }).catch(() => {});
 
-    // Get auth session token
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      throw new Error('User not authenticated for image upload');
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
     }
 
-    // Upload to Supabase Storage using authenticated session
-    const response = await fetch(`${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/diagnosis-images/${filePath}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session.access_token}`,
-        'Content-Type': 'multipart/form-data',
-      },
-      body: formData,
+    // Upload via Supabase SDK — avoids multipart/form-data issues in React Native
+    const { error: uploadError } = await supabase.storage
+      .from("diagnosis-images")
+      .upload(filePath, bytes.buffer, {
+        contentType: `image/${fileExt}`,
+        upsert: false,
+      });
+
+    if (uploadError) {
+      throw new Error(`Upload failed: ${uploadError.message}`);
+    }
+
+    // Try a long-lived signed URL first (works for private buckets)
+    // Fall back to public URL if the bucket is public
+    let imageUrl: string;
+    const { data: signedData, error: signedError } = await supabase.storage
+      .from("diagnosis-images")
+      .createSignedUrl(filePath, 60 * 60 * 24 * 365 * 10); // 10 years
+
+    if (!signedError && signedData?.signedUrl) {
+      imageUrl = signedData.signedUrl;
+    } else {
+      const {
+        data: { publicUrl },
+      } = supabase.storage.from("diagnosis-images").getPublicUrl(filePath);
+      imageUrl = publicUrl;
+      console.log("⚠️ Signed URL failed, using public URL");
+    }
+
+    console.log("✅ Diagnosis image uploaded:", {
+      path: filePath,
+      url: imageUrl,
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Upload failed: ${errorText}`);
-    }
-
-    const data = await response.json();
-
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('diagnosis-images')
-      .getPublicUrl(filePath);
-
-    console.log('✅ Diagnosis image uploaded successfully:', { path: filePath, url: publicUrl });
-
-    return {
-      url: publicUrl,
-      path: filePath,
-      metadata,
-    };
+    return { url: imageUrl, path: filePath, metadata };
   } catch (error) {
-    console.error('❌ Failed to upload diagnosis image:', error);
+    console.error("❌ Failed to upload diagnosis image:", error);
     throw error;
   }
 };
@@ -178,16 +187,19 @@ export const uploadDiagnosisImage = async (
 /**
  * Uploads a profile photo to Supabase Storage
  */
-export const uploadProfilePhoto = async (uri: string, userId: string): Promise<UploadResult> => {
+export const uploadProfilePhoto = async (
+  uri: string,
+  userId: string,
+): Promise<UploadResult> => {
   try {
-    console.log('📤 Starting profile photo upload...', { userId });
+    console.log("📤 Starting profile photo upload...", { userId });
 
     // Compress the image with profile-specific settings
     const { uri: compressedUri, metadata } = await compressImage(uri, {
       maxWidth: 512,
       maxHeight: 512,
       quality: 0.9,
-      format: 'jpeg',
+      format: "jpeg",
     });
 
     // Generate file path
@@ -201,27 +213,32 @@ export const uploadProfilePhoto = async (uri: string, userId: string): Promise<U
 
     // Create FormData for React Native upload
     const formData = new FormData();
-    formData.append('file', {
+    formData.append("file", {
       uri: compressedUri,
       type: `image/${metadata.format}`,
       name: fileName,
     } as any);
 
     // Get auth session token
-    const { data: { session } } = await supabase.auth.getSession();
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
     if (!session) {
-      throw new Error('User not authenticated for profile photo upload');
+      throw new Error("User not authenticated for profile photo upload");
     }
 
     // Upload to Supabase Storage using authenticated session
-    const response = await fetch(`${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/profile-photos/${filePath}`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${session.access_token}`,
-        'Content-Type': 'multipart/form-data',
+    const response = await fetch(
+      `${process.env.EXPO_PUBLIC_SUPABASE_URL}/storage/v1/object/profile-photos/${filePath}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "multipart/form-data",
+        },
+        body: formData,
       },
-      body: formData,
-    });
+    );
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -231,11 +248,14 @@ export const uploadProfilePhoto = async (uri: string, userId: string): Promise<U
     const data = await response.json();
 
     // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('profile-photos')
-      .getPublicUrl(filePath);
+    const {
+      data: { publicUrl },
+    } = supabase.storage.from("profile-photos").getPublicUrl(filePath);
 
-    console.log('✅ Profile photo uploaded successfully:', { path: filePath, url: publicUrl });
+    console.log("✅ Profile photo uploaded successfully:", {
+      path: filePath,
+      url: publicUrl,
+    });
 
     return {
       url: publicUrl,
@@ -243,7 +263,7 @@ export const uploadProfilePhoto = async (uri: string, userId: string): Promise<U
       metadata,
     };
   } catch (error) {
-    console.error('❌ Failed to upload profile photo:', error);
+    console.error("❌ Failed to upload profile photo:", error);
     throw error;
   }
 };
@@ -251,20 +271,23 @@ export const uploadProfilePhoto = async (uri: string, userId: string): Promise<U
 /**
  * Deletes an image from Supabase Storage
  */
-export const deleteImage = async (bucket: 'diagnosis-images' | 'profile-photos', path: string): Promise<void> => {
+export const deleteImage = async (
+  bucket: "diagnosis-images" | "profile-photos",
+  path: string,
+): Promise<void> => {
   try {
-    console.log('🗑️ Deleting image...', { bucket, path });
+    console.log("🗑️ Deleting image...", { bucket, path });
 
     const { error } = await supabase.storage.from(bucket).remove([path]);
 
     if (error) {
-      console.error('❌ Failed to delete image:', error);
+      console.error("❌ Failed to delete image:", error);
       throw new Error(`Delete failed: ${error.message}`);
     }
 
-    console.log('✅ Image deleted successfully');
+    console.log("✅ Image deleted successfully");
   } catch (error) {
-    console.error('❌ Failed to delete image:', error);
+    console.error("❌ Failed to delete image:", error);
     throw error;
   }
 };
@@ -272,8 +295,13 @@ export const deleteImage = async (bucket: 'diagnosis-images' | 'profile-photos',
 /**
  * Gets the public URL for an image
  */
-export const getImageUrl = (bucket: 'diagnosis-images' | 'profile-photos', path: string): string => {
-  const { data: { publicUrl } } = supabase.storage.from(bucket).getPublicUrl(path);
+export const getImageUrl = (
+  bucket: "diagnosis-images" | "profile-photos",
+  path: string,
+): string => {
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(bucket).getPublicUrl(path);
   return publicUrl;
 };
 
@@ -287,12 +315,12 @@ export const getImageMetadata = async (uri: string): Promise<ImageMetadata> => {
 
     return {
       size: (fileInfo as any).size || 0,
-      format: uri.split('.').pop()?.toLowerCase() || 'unknown',
+      format: uri.split(".").pop()?.toLowerCase() || "unknown",
       dimensions: { width, height },
     };
   } catch (error) {
-    console.error('❌ Failed to get image metadata:', error);
-    throw new Error('Failed to get image metadata');
+    console.error("❌ Failed to get image metadata:", error);
+    throw new Error("Failed to get image metadata");
   }
 };
 
@@ -301,31 +329,42 @@ export const getImageMetadata = async (uri: string): Promise<ImageMetadata> => {
  */
 export const validateImage = async (uri: string): Promise<boolean> => {
   try {
+    // For content:// URIs (Android gallery), skip file system checks
+    // as FileSystem cannot access them directly
+    if (uri.startsWith("content://")) {
+      return true;
+    }
+
     const fileInfo = await FileSystem.getInfoAsync(uri);
-    
+
     if (!fileInfo.exists) {
-      console.error('❌ Image file does not exist');
+      console.error("❌ Image file does not exist");
       return false;
     }
 
     const size = (fileInfo as any).size || 0;
     if (size > MAX_FILE_SIZE) {
-      console.error('❌ Image size exceeds limit:', size, '>', MAX_FILE_SIZE);
+      console.error("❌ Image size exceeds limit:", size, ">", MAX_FILE_SIZE);
       return false;
     }
 
-    // Check if it's a valid image format
-    const validFormats = ['jpg', 'jpeg', 'png', 'webp'];
-    const extension = uri.split('.').pop()?.toLowerCase();
-    
-    if (!extension || !validFormats.includes(extension)) {
-      console.error('❌ Invalid image format:', extension);
+    // Check if it's a valid image format — only for file:// URIs that have extensions
+    const validFormats = ["jpg", "jpeg", "png", "webp"];
+    const uriWithoutQuery = uri.split("?")[0];
+    const extension = uriWithoutQuery.split(".").pop()?.toLowerCase();
+
+    if (
+      extension &&
+      extension.length <= 5 &&
+      !validFormats.includes(extension)
+    ) {
+      console.error("❌ Invalid image format:", extension);
       return false;
     }
 
     return true;
   } catch (error) {
-    console.error('❌ Failed to validate image:', error);
+    console.error("❌ Failed to validate image:", error);
     return false;
   }
 };
@@ -333,15 +372,16 @@ export const validateImage = async (uri: string): Promise<boolean> => {
 /**
  * Helper function to get image dimensions
  */
-const getImageDimensions = async (uri: string): Promise<{ width: number; height: number }> => {
-  try {
-    // For now, return default dimensions
-    // In a real implementation, you might use a library to get actual dimensions
-    return { width: 1920, height: 1080 };
-  } catch (error) {
-    console.error('Failed to get image dimensions:', error);
-    return { width: 1920, height: 1080 };
-  }
+const getImageDimensions = async (
+  uri: string,
+): Promise<{ width: number; height: number }> => {
+  return new Promise((resolve) => {
+    Image.getSize(
+      uri,
+      (width, height) => resolve({ width, height }),
+      () => resolve({ width: 1920, height: 1080 }), // fallback on error
+    );
+  });
 };
 
 /**
@@ -351,7 +391,7 @@ const calculateDimensions = (
   originalWidth: number,
   originalHeight: number,
   maxWidth: number,
-  maxHeight: number
+  maxHeight: number,
 ): { newWidth: number; newHeight: number } => {
   const aspectRatio = originalWidth / originalHeight;
 
@@ -377,21 +417,34 @@ const calculateDimensions = (
 };
 
 /**
- * Cleanup temporary files
+ * Cleanup temporary files — only deletes files in the app's cache directory
  */
 export const cleanupTempFiles = async (uris: string[]): Promise<void> => {
   try {
     await Promise.all(
       uris.map(async (uri) => {
         try {
+          // Only delete files that are in the app's own cache/temp directories
+          // Never delete content:// URIs (Android gallery) or original file:// URIs
+          const appCacheDir = FileSystem.cacheDirectory || "";
+          const appDocDir = FileSystem.documentDirectory || "";
+
+          if (!uri.startsWith(appCacheDir) && !uri.startsWith(appDocDir)) {
+            console.log(
+              "⏭️ Skipping cleanup of non-app file:",
+              uri.substring(0, 50),
+            );
+            return;
+          }
+
           await FileSystem.deleteAsync(uri, { idempotent: true });
         } catch (error) {
-          console.warn('⚠️ Failed to delete temp file:', uri);
+          console.warn("⚠️ Failed to delete temp file:", uri.substring(0, 50));
         }
-      })
+      }),
     );
-    console.log('🧹 Temporary files cleaned up');
+    console.log("🧹 Temporary files cleaned up");
   } catch (error) {
-    console.error('❌ Failed to cleanup temp files:', error);
+    console.error("❌ Failed to cleanup temp files:", error);
   }
 };

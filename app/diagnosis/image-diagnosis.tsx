@@ -1,9 +1,9 @@
 // app/diagnosis/image-diagnosis.tsx
-import { Ionicons, MaterialIcons } from '@expo/vector-icons';
-import { Camera } from 'expo-camera';
-import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import { Ionicons, MaterialIcons } from "@expo/vector-icons";
+import { Camera } from "expo-camera";
+import * as ImagePicker from "expo-image-picker";
+import { useRouter } from "expo-router";
+import React, { useEffect, useRef, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -14,17 +14,32 @@ import {
     Text,
     TouchableOpacity,
     View,
-} from 'react-native';
-import { BORDER_RADIUS, COLORS, FONT_SIZES, LINE_HEIGHT, SHADOWS, SPACING } from '../../constants/theme';
-import { useDiagnosis } from '../../contexts/DiagnosisContext';
-import { DiagnosisAPI } from '../../services/api';
-import { uploadDiagnosisImage, validateImage, cleanupTempFiles } from '../../services/imageService';
-import { useAuth } from '../../contexts/AuthContext';
+} from "react-native";
+import {
+    BORDER_RADIUS,
+    COLORS,
+    FONT_SIZES,
+    LINE_HEIGHT,
+    SHADOWS,
+    SPACING,
+} from "../../constants/theme";
+import { useAuth } from "../../contexts/AuthContext";
+import { useDiagnosis } from "../../contexts/DiagnosisContext";
+import { DiagnosisAPI } from "../../services/api";
+import {
+    cleanupTempFiles,
+    uploadDiagnosisImage,
+    validateImage,
+} from "../../services/imageService";
 
 export default function ImageDiagnosis() {
   const [image, setImage] = useState<string | null>(null);
-  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
-  const [hasGalleryPermission, setHasGalleryPermission] = useState<boolean | null>(null);
+  const [hasCameraPermission, setHasCameraPermission] = useState<
+    boolean | null
+  >(null);
+  const [hasGalleryPermission, setHasGalleryPermission] = useState<
+    boolean | null
+  >(null);
   const [isLoading, setIsLoading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const router = useRouter();
@@ -64,7 +79,7 @@ export default function ImageDiagnosis() {
         useNativeDriver: true,
       }),
     ]).start();
-    
+
     setTimeout(callback, 100);
   };
 
@@ -75,27 +90,28 @@ export default function ImageDiagnosis() {
   const requestPermissions = async () => {
     try {
       const cameraResponse = await Camera.requestCameraPermissionsAsync();
-      setHasCameraPermission(cameraResponse.status === 'granted');
+      setHasCameraPermission(cameraResponse.status === "granted");
 
-      const galleryResponse = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      setHasGalleryPermission(galleryResponse.status === 'granted');
+      const galleryResponse =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      setHasGalleryPermission(galleryResponse.status === "granted");
 
-      if (galleryResponse.status !== 'granted') {
+      if (galleryResponse.status !== "granted") {
         Alert.alert(
-          'Permission Needed',
-          'Please allow access to your photo library to use this feature.'
+          "Permission Needed",
+          "Please allow access to your photo library to use this feature.",
         );
       }
 
-      if (cameraResponse.status !== 'granted') {
+      if (cameraResponse.status !== "granted") {
         Alert.alert(
-          'Permission Needed',
-          'Please allow camera access to take photos.'
+          "Permission Needed",
+          "Please allow camera access to take photos.",
         );
       }
     } catch (error) {
-      console.error('Permission request error:', error);
-      Alert.alert('Error', 'Failed to request permissions.');
+      console.error("Permission request error:", error);
+      Alert.alert("Error", "Failed to request permissions.");
     }
   };
 
@@ -103,28 +119,31 @@ export default function ImageDiagnosis() {
     try {
       if (hasCameraPermission === false) {
         Alert.alert(
-          'Camera Permission Required',
-          'Please grant camera permission in your device settings.',
+          "Camera Permission Required",
+          "Please grant camera permission in your device settings.",
           [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => Camera.requestCameraPermissionsAsync() },
-          ]
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Open Settings",
+              onPress: () => Camera.requestCameraPermissionsAsync(),
+            },
+          ],
         );
         return;
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
+        allowsEditing: false,
+        exif: false,
+        base64: false,
       });
 
       if (!result.canceled && result.assets[0]) {
         setImage(result.assets[0].uri);
       }
     } catch (error) {
-      console.error('Camera error:', error);
-      Alert.alert('Error', 'Failed to open camera. Please try again.');
+      console.error("Camera error:", error);
+      Alert.alert("Error", "Failed to open camera. Please try again.");
     }
   };
 
@@ -132,40 +151,49 @@ export default function ImageDiagnosis() {
     try {
       if (hasGalleryPermission === false) {
         Alert.alert(
-          'Gallery Permission Required',
-          'Please grant photo library permission in your device settings.',
+          "Gallery Permission Required",
+          "Please grant photo library permission in your device settings.",
           [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Open Settings', onPress: () => ImagePicker.requestMediaLibraryPermissionsAsync() },
-          ]
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Open Settings",
+              onPress: () => ImagePicker.requestMediaLibraryPermissionsAsync(),
+            },
+          ],
         );
         return;
       }
 
+      // Use legacy MediaTypeOptions to avoid file-copy bug on Android 10 (API 29)
+      // with Expo Go. The new array format ["images"] triggers a different code
+      // path that fails to write to cache on older Android versions.
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        exif: false,
+        base64: false,
       });
 
       if (!result.canceled && result.assets[0]) {
         setImage(result.assets[0].uri);
       }
     } catch (error) {
-      console.error('Image picker error:', error);
-      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+      console.error("Image picker error:", error);
+      Alert.alert("Error", "Failed to open gallery. Please try again.");
     }
   };
 
   const analyzeImage = async () => {
     if (!image) {
-      Alert.alert('No Image', 'Please take or select a photo first.');
+      Alert.alert("No Image", "Please take or select a photo first.");
       return;
     }
 
     if (!user) {
-      Alert.alert('Authentication Required', 'Please log in to analyze images.');
+      Alert.alert(
+        "Authentication Required",
+        "Please log in to analyze images.",
+      );
       return;
     }
 
@@ -174,41 +202,53 @@ export default function ImageDiagnosis() {
 
     try {
       // Step 1: Validate image
-      console.log('🔍 Validating image...');
+      console.log("🔍 Validating image...");
       const isValid = await validateImage(image);
       if (!isValid) {
-        throw new Error('Invalid image format or size too large');
+        throw new Error("Invalid image format or size too large");
       }
 
       // Step 2: Analyze image locally first
-      console.log('🧠 Analyzing image locally...');
+      console.log("🧠 Analyzing image locally...");
       setUploadProgress(25);
       const response = await DiagnosisAPI.analyzeImage(image);
 
       if (!response.success || !response.data) {
-        throw new Error(response.error || 'Analysis failed');
+        throw new Error(response.error || "Analysis failed");
       }
 
-      // Step 3: Upload image to Supabase Storage
-      console.log('📤 Uploading image to storage...');
+      // Step 3: Upload image to Supabase Storage (non-blocking — diagnosis saves even if upload fails)
+      console.log("📤 Uploading image to storage...");
       setUploadProgress(50);
-      
-      // Generate a temporary diagnosis ID for upload
+
       const tempDiagnosisId = `temp-${Date.now()}`;
-      const uploadResult = await uploadDiagnosisImage(image, tempDiagnosisId, user.id);
-      
+      let uploadResult: { url: string; path: string; metadata: any } | null =
+        null;
+      try {
+        uploadResult = await uploadDiagnosisImage(
+          image,
+          tempDiagnosisId,
+          user.id,
+        );
+      } catch (uploadError) {
+        console.warn(
+          "⚠️ Image upload failed, saving diagnosis without remote URL:",
+          uploadError,
+        );
+      }
+
       setUploadProgress(75);
 
-      // Step 4: Update diagnosis with image information
+      // Step 4: Save diagnosis — use Supabase URL if upload succeeded, local URI as fallback
       const diagnosisWithImage = {
         ...response.data,
-        imageUri: image,
-        imageUrl: uploadResult.url,
-        imagePath: uploadResult.path,
-        imageMetadata: uploadResult.metadata,
+        imageUri: uploadResult?.url || image, // remote URL preferred, local URI as fallback
+        imageUrl: uploadResult?.url || undefined,
+        imagePath: uploadResult?.path,
+        imageMetadata: uploadResult?.metadata,
       };
 
-      console.log('💾 Saving diagnosis with image...');
+      console.log("💾 Saving diagnosis with image...");
       setUploadProgress(90);
       await addDiagnosis(diagnosisWithImage);
 
@@ -216,22 +256,24 @@ export default function ImageDiagnosis() {
       await cleanupTempFiles([image]);
       setUploadProgress(100);
 
-      console.log('✅ Image analysis and upload complete!');
-      
+      console.log("✅ Image analysis and upload complete!");
+
       router.push({
-        pathname: '/diagnosis/result',
+        pathname: "/diagnosis/result",
         params: { diagnosisId: response.data.id },
       });
     } catch (error) {
-      console.error('❌ Image analysis error:', error);
-      
+      console.error("❌ Image analysis error:", error);
+
       // Cleanup on error
       await cleanupTempFiles([image]);
-      
+
       Alert.alert(
-        'Analysis Failed',
-        error instanceof Error ? error.message : 'Failed to analyze image. Please try again or use symptom diagnosis.',
-        [{ text: 'OK' }]
+        "Analysis Failed",
+        error instanceof Error
+          ? error.message
+          : "Failed to analyze image. Please try again or use symptom diagnosis.",
+        [{ text: "OK" }],
       );
     } finally {
       setIsLoading(false);
@@ -245,17 +287,19 @@ export default function ImageDiagnosis() {
 
   const retakePhoto = () => {
     setImage(null);
-    setTimeout(takePhoto, 100);
+    takePhoto();
   };
 
   return (
-    <Animated.View style={[
-      styles.container,
-      {
-        opacity: fadeAnim,
-        transform: [{ translateY: slideAnim }],
-      }
-    ]}>
+    <Animated.View
+      style={[
+        styles.container,
+        {
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }],
+        },
+      ]}
+    >
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
@@ -275,19 +319,37 @@ export default function ImageDiagnosis() {
             <View style={styles.instructionsContainer}>
               <Text style={styles.instructionsTitle}>Photo Guidelines:</Text>
               <View style={styles.instructionItem}>
-                <Ionicons name="checkmark-circle" size={18} color={COLORS.success} />
+                <Ionicons
+                  name="checkmark-circle"
+                  size={18}
+                  color={COLORS.success}
+                />
                 <Text style={styles.instructionText}>Good lighting</Text>
               </View>
               <View style={styles.instructionItem}>
-                <Ionicons name="checkmark-circle" size={18} color={COLORS.success} />
-                <Text style={styles.instructionText}>Clear focus on affected area</Text>
+                <Ionicons
+                  name="checkmark-circle"
+                  size={18}
+                  color={COLORS.success}
+                />
+                <Text style={styles.instructionText}>
+                  Clear focus on affected area
+                </Text>
               </View>
               <View style={styles.instructionItem}>
-                <Ionicons name="checkmark-circle" size={18} color={COLORS.success} />
+                <Ionicons
+                  name="checkmark-circle"
+                  size={18}
+                  color={COLORS.success}
+                />
                 <Text style={styles.instructionText}>Close-up if possible</Text>
               </View>
               <View style={styles.instructionItem}>
-                <Ionicons name="checkmark-circle" size={18} color={COLORS.success} />
+                <Ionicons
+                  name="checkmark-circle"
+                  size={18}
+                  color={COLORS.success}
+                />
                 <Text style={styles.instructionText}>Multiple angles help</Text>
               </View>
             </View>
@@ -297,19 +359,23 @@ export default function ImageDiagnosis() {
                 style={[
                   styles.button,
                   styles.cameraButton,
-                  { transform: [{ scale: buttonScaleAnim }] }
+                  { transform: [{ scale: buttonScaleAnim }] },
                 ]}
               >
                 <TouchableOpacity
                   style={styles.buttonInner}
-                  onPress={() => handleButtonPress(takePhoto)}
+                  onPress={takePhoto}
                   activeOpacity={0.8}
                   disabled={hasCameraPermission === false}
                   accessible={true}
                   accessibilityLabel="Take photo"
                   accessibilityHint="Opens camera to take a photo"
                 >
-                  <MaterialIcons name="camera-alt" size={28} color={COLORS.white} />
+                  <MaterialIcons
+                    name="camera-alt"
+                    size={28}
+                    color={COLORS.white}
+                  />
                   <Text style={styles.buttonText}>Take Photo</Text>
                 </TouchableOpacity>
               </Animated.View>
@@ -318,19 +384,23 @@ export default function ImageDiagnosis() {
                 style={[
                   styles.button,
                   styles.galleryButton,
-                  { transform: [{ scale: buttonScaleAnim }] }
+                  { transform: [{ scale: buttonScaleAnim }] },
                 ]}
               >
                 <TouchableOpacity
                   style={styles.buttonInner}
-                  onPress={() => handleButtonPress(pickImage)}
+                  onPress={pickImage}
                   activeOpacity={0.8}
                   disabled={hasGalleryPermission === false}
                   accessible={true}
                   accessibilityLabel="Pick from gallery"
                   accessibilityHint="Opens gallery to select a photo"
                 >
-                  <MaterialIcons name="photo-library" size={28} color={COLORS.white} />
+                  <MaterialIcons
+                    name="photo-library"
+                    size={28}
+                    color={COLORS.white}
+                  />
                   <Text style={styles.buttonText}>Pick from Gallery</Text>
                 </TouchableOpacity>
               </Animated.View>
@@ -338,15 +408,23 @@ export default function ImageDiagnosis() {
           </>
         ) : (
           <View style={styles.imageContainer}>
-            <Image source={{ uri: image }} style={styles.image} resizeMode="cover" />
-            
+            <Image
+              source={{ uri: image }}
+              style={styles.image}
+              resizeMode="cover"
+            />
+
             <View style={styles.imageActions}>
               <TouchableOpacity
                 style={[styles.imageActionButton, styles.retakeButton]}
                 onPress={retakePhoto}
                 disabled={isLoading}
               >
-                <Ionicons name="camera-outline" size={24} color={COLORS.white} />
+                <Ionicons
+                  name="camera-outline"
+                  size={24}
+                  color={COLORS.white}
+                />
                 <Text style={styles.imageActionText}>Retake</Text>
               </TouchableOpacity>
 
@@ -359,12 +437,18 @@ export default function ImageDiagnosis() {
                   <View style={styles.loadingContent}>
                     <ActivityIndicator size="small" color={COLORS.white} />
                     <Text style={styles.imageActionText}>
-                      {uploadProgress > 0 ? `Uploading... ${Math.round(uploadProgress)}%` : 'Analyzing...'}
+                      {uploadProgress > 0
+                        ? `Uploading... ${Math.round(uploadProgress)}%`
+                        : "Analyzing..."}
                     </Text>
                   </View>
                 ) : (
                   <>
-                    <Ionicons name="analytics-outline" size={24} color={COLORS.white} />
+                    <Ionicons
+                      name="analytics-outline"
+                      size={24}
+                      color={COLORS.white}
+                    />
                     <Text style={styles.imageActionText}>Analyze</Text>
                   </>
                 )}
@@ -374,7 +458,11 @@ export default function ImageDiagnosis() {
         )}
 
         <View style={styles.infoBox}>
-          <Ionicons name="information-circle" size={24} color={COLORS.warning} />
+          <Ionicons
+            name="information-circle"
+            size={24}
+            color={COLORS.warning}
+          />
           <Text style={styles.infoText}>
             For best results, combine image diagnosis with symptom description
           </Text>
@@ -395,7 +483,7 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
   header: {
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: SPACING.xl,
   },
   iconContainer: {
@@ -403,14 +491,14 @@ const styles = StyleSheet.create({
     height: 70,
     borderRadius: 35,
     backgroundColor: COLORS.white,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     marginBottom: SPACING.md,
     ...SHADOWS.small,
   },
   title: {
     fontSize: FONT_SIZES.title,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     color: COLORS.secondary,
     marginBottom: SPACING.sm,
     lineHeight: FONT_SIZES.title * LINE_HEIGHT.sm,
@@ -418,7 +506,7 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: FONT_SIZES.sm,
     color: COLORS.textLight,
-    textAlign: 'center',
+    textAlign: "center",
     paddingHorizontal: SPACING.md,
     lineHeight: FONT_SIZES.sm * LINE_HEIGHT.sm,
   },
@@ -431,14 +519,14 @@ const styles = StyleSheet.create({
   },
   instructionsTitle: {
     fontSize: FONT_SIZES.md,
-    fontWeight: '600',
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: SPACING.sm,
     lineHeight: FONT_SIZES.md * LINE_HEIGHT.sm,
   },
   instructionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: SPACING.sm,
   },
   instructionText: {
@@ -452,18 +540,18 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.xl,
   },
   button: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     padding: SPACING.lg,
     borderRadius: BORDER_RADIUS.lg,
     ...SHADOWS.medium,
   },
   buttonInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '100%',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
   },
   cameraButton: {
     backgroundColor: COLORS.success,
@@ -475,30 +563,30 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: FONT_SIZES.lg,
     marginLeft: SPACING.sm,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: FONT_SIZES.lg * LINE_HEIGHT.sm,
   },
   imageContainer: {
-    alignItems: 'center',
+    alignItems: "center",
     marginBottom: SPACING.lg,
   },
   image: {
-    width: '100%',
+    width: "100%",
     height: 350,
     borderRadius: BORDER_RADIUS.md,
     marginBottom: SPACING.md,
     ...SHADOWS.medium,
   },
   imageActions: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: SPACING.md,
     marginBottom: SPACING.lg,
-    width: '100%',
+    width: "100%",
   },
   imageActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     paddingVertical: SPACING.md,
     paddingHorizontal: SPACING.lg,
     borderRadius: BORDER_RADIUS.md,
@@ -512,7 +600,7 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontSize: FONT_SIZES.md,
     marginLeft: SPACING.xs,
-    fontWeight: '600',
+    fontWeight: "600",
     lineHeight: FONT_SIZES.md * LINE_HEIGHT.sm,
   },
   analyzeButton: {
@@ -520,16 +608,16 @@ const styles = StyleSheet.create({
     flex: 0.65,
   },
   loadingContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
   },
   infoBox: {
-    flexDirection: 'row',
-    backgroundColor: '#FFF9E6',
+    flexDirection: "row",
+    backgroundColor: "#FFF9E6",
     padding: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
-    alignItems: 'center',
+    alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.warning,
   },

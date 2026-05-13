@@ -1,39 +1,48 @@
 // contexts/DiagnosisContext.tsx
 
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import React, { createContext, ReactNode, useContext, useEffect, useRef, useState } from 'react';
+import React, {
+    createContext,
+    ReactNode,
+    useContext,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
 
-import { notificationService } from '../services/notificationService';
-import { DiagnosisResult } from '../types/types';
+import { notificationService } from "../services/notificationService";
+import { DiagnosisResult } from "../types/types";
 
 // Simple UUID generator using crypto
 const generateUUID = () => {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
   // Fallback for older environments
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-    const r = Math.random() * 16 | 0;
-    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 };
 
-import { useAuth } from './AuthContext';
+import { useAuth } from "./AuthContext";
 
-import * as diagnosisService from '../services/supabase-diagnoses';
+import * as diagnosisService from "../services/supabase-diagnoses";
 
-import { supabase } from '../lib/supabase';
+import { supabase } from "../lib/supabase";
 
-import NetInfo from '@react-native-community/netinfo';
+import NetInfo from "@react-native-community/netinfo";
 
-import { RealtimeChannel } from '@supabase/supabase-js';
+import { RealtimeChannel } from "@supabase/supabase-js";
 
-import { canMakeDiagnosisRequest, getUsageInfo } from '../utils/edgeFunctionClient';
+import {
+    canMakeDiagnosisRequest,
+    getUsageInfo,
+} from "../utils/edgeFunctionClient";
 
 interface DiagnosisContextType {
-
   history: DiagnosisResult[];
 
   addDiagnosis: (result: DiagnosisResult) => Promise<void>;
@@ -63,24 +72,31 @@ interface DiagnosisContextType {
   // Image-related functions
   addImageDiagnosis: (imageUri: string, analysisResult: any) => Promise<void>;
   deleteDiagnosisImage: (diagnosisId: string) => Promise<void>;
-  updateDiagnosisImage: (diagnosisId: string, imageUri: string) => Promise<void>;
+  updateDiagnosisImage: (
+    diagnosisId: string,
+    imageUri: string,
+  ) => Promise<void>;
 
   // Edge function functions
-  diagnoseWithEdgeFunction: (type: 'text' | 'image', input: string, symptoms?: string[], imageData?: string) => Promise<any>;
+  diagnoseWithEdgeFunction: (
+    type: "text" | "image",
+    input: string,
+    symptoms?: string[],
+    imageData?: string,
+  ) => Promise<any>;
   getUsageInfo: () => Promise<any>;
   canMakeDiagnosisRequest: () => Promise<{ allowed: boolean; usage?: any }>;
-
 }
 
-const DiagnosisContext = createContext<DiagnosisContextType | undefined>(undefined);
+const DiagnosisContext = createContext<DiagnosisContextType | undefined>(
+  undefined,
+);
 
+const STORAGE_KEY = "@poultrycure_history";
 
+const PENDING_QUEUE_KEY = "@poultrycure_pending_queue";
 
-const STORAGE_KEY = '@poultrycure_history';
-
-const PENDING_QUEUE_KEY = '@poultrycure_pending_queue';
-
-const LAST_SYNC_KEY = '@poultrycure_last_sync';
+const LAST_SYNC_KEY = "@poultrycure_last_sync";
 
 // Retry configuration
 const RETRY_CONFIG = {
@@ -91,7 +107,10 @@ const RETRY_CONFIG = {
 
 // Exponential backoff with jitter
 const exponentialBackoff = (attempt: number): number => {
-  const delay = Math.min(RETRY_CONFIG.baseDelay * Math.pow(2, attempt), RETRY_CONFIG.maxDelay);
+  const delay = Math.min(
+    RETRY_CONFIG.baseDelay * Math.pow(2, attempt),
+    RETRY_CONFIG.maxDelay,
+  );
   // Add jitter to avoid thundering herd
   return delay + Math.random() * 1000;
 };
@@ -99,61 +118,64 @@ const exponentialBackoff = (attempt: number): number => {
 // Error type detection
 const isRetryableError = (error: any): boolean => {
   if (!error) return false;
-  
-  const errorMessage = error.message?.toLowerCase() || '';
+
+  const errorMessage = error.message?.toLowerCase() || "";
   const errorCode = error.code;
-  
+
   // Network errors are retryable
-  if (errorMessage.includes('network') || 
-      errorMessage.includes('timeout') || 
-      errorMessage.includes('connection') ||
-      errorCode === 'NETWORK_ERROR' ||
-      errorCode === 'TIMEOUT') {
+  if (
+    errorMessage.includes("network") ||
+    errorMessage.includes("timeout") ||
+    errorMessage.includes("connection") ||
+    errorCode === "NETWORK_ERROR" ||
+    errorCode === "TIMEOUT"
+  ) {
     return true;
   }
-  
+
   // Supabase rate limit errors are retryable
-  if (errorMessage.includes('rate limit') || 
-      errorMessage.includes('too many requests')) {
+  if (
+    errorMessage.includes("rate limit") ||
+    errorMessage.includes("too many requests")
+  ) {
     return true;
   }
-  
+
   // Auth errors are not retryable
-  if (errorMessage.includes('unauthorized') || 
-      errorMessage.includes('authentication') ||
-      errorMessage.includes('jwt')) {
+  if (
+    errorMessage.includes("unauthorized") ||
+    errorMessage.includes("authentication") ||
+    errorMessage.includes("jwt")
+  ) {
     return false;
   }
-  
+
   // Data validation errors are not retryable
-  if (errorMessage.includes('invalid') || 
-      errorMessage.includes('validation') ||
-      errorMessage.includes('uuid')) {
+  if (
+    errorMessage.includes("invalid") ||
+    errorMessage.includes("validation") ||
+    errorMessage.includes("uuid")
+  ) {
     return false;
   }
-  
+
   // Default: assume retryable for unknown errors
   return true;
 };
 
-
-
 interface PendingOperation {
-
   id: string;
 
-  type: 'add' | 'delete' | 'clear';
+  type: "add" | "delete" | "clear";
 
   data?: DiagnosisResult;
 
   timestamp: string;
-
 }
 
-
-
-export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-
+export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({
+  children,
+}) => {
   const [history, setHistory] = useState<DiagnosisResult[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -173,50 +195,28 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
-
-    const unsubscribe = NetInfo.addEventListener(state => {
-
+    const unsubscribe = NetInfo.addEventListener((state) => {
       setIsOnline(state.isConnected ?? false);
-
     });
 
-
-
     return () => unsubscribe();
-
   }, []);
 
-
-
   useEffect(() => {
-
     if (user) {
-
       loadHistory();
-
     } else {
-
       setHistory([]);
 
       setIsLoading(false);
-
     }
-
   }, [user]);
 
-
-
   useEffect(() => {
-
     if (user && isOnline) {
-
       syncPendingOperations();
-
     }
-
   }, [user, isOnline]);
-
-
 
   useEffect(() => {
     if (!user || !isOnline) {
@@ -240,34 +240,34 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
         }
 
         // Add small delay to prevent rapid reconnections
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
         // Create new subscription for user's diagnoses
         const channel = supabase
           .channel(`diagnoses_changes_${user.id}`)
           .on(
-            'postgres_changes',
+            "postgres_changes",
             {
-              event: '*',
-              schema: 'public',
-              table: 'diagnoses',
-              filter: `user_id=eq.${user.id}`
+              event: "*",
+              schema: "public",
+              table: "diagnoses",
+              filter: `user_id=eq.${user.id}`,
             },
-            (payload: any) => handleRealtimeChange(payload)
+            (payload: any) => handleRealtimeChange(payload),
           )
           .subscribe((status: any) => {
-            console.log('Realtime subscription status:', status);
-            setIsRealtimeConnected(status === 'SUBSCRIBED');
-            
-            if (status === 'CHANNEL_ERROR') {
-              console.log('🔄 Realtime channel error, will retry...');
+            console.log("Realtime subscription status:", status);
+            setIsRealtimeConnected(status === "SUBSCRIBED");
+
+            if (status === "CHANNEL_ERROR") {
+              console.log("🔄 Realtime channel error, will retry...");
             }
           });
 
         realtimeChannelRef.current = channel;
-        console.log('✅ Real-time subscription established for user:', user.id);
+        console.log("✅ Real-time subscription established for user:", user.id);
       } catch (error) {
-        console.error('❌ Failed to setup real-time subscription:', error);
+        console.error("❌ Failed to setup real-time subscription:", error);
         setIsRealtimeConnected(false);
       }
     };
@@ -284,22 +284,22 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
     };
   }, [user, isOnline]);
 
-
-
   const handleRealtimeChange = async (payload: any) => {
-    console.log('🔄 Real-time change detected:', payload);
+    console.log("🔄 Real-time change detected:", payload);
 
     try {
       const { eventType, new: newRecord, old: oldRecord } = payload;
 
       switch (eventType) {
-        case 'INSERT':
+        case "INSERT":
           // New diagnosis added from another device
           if (newRecord && newRecord.user_id === user?.id) {
-            console.log('➕ New diagnosis added remotely:', newRecord.id);
+            console.log("➕ New diagnosis added remotely:", newRecord.id);
             // Add to local history if not already present
-            setHistory(prevHistory => {
-              const exists = prevHistory.some(item => item.id === newRecord.id);
+            setHistory((prevHistory) => {
+              const exists = prevHistory.some(
+                (item) => item.id === newRecord.id,
+              );
               if (!exists) {
                 const updatedHistory = [newRecord, ...prevHistory];
                 saveToLocalStorage(updatedHistory);
@@ -310,13 +310,13 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
           }
           break;
 
-        case 'UPDATE':
+        case "UPDATE":
           // Diagnosis updated from another device
           if (newRecord && newRecord.user_id === user?.id) {
-            console.log('✏️ Diagnosis updated remotely:', newRecord.id);
-            setHistory(prevHistory => {
-              const updatedHistory = prevHistory.map(item => 
-                item.id === newRecord.id ? newRecord : item
+            console.log("✏️ Diagnosis updated remotely:", newRecord.id);
+            setHistory((prevHistory) => {
+              const updatedHistory = prevHistory.map((item) =>
+                item.id === newRecord.id ? newRecord : item,
               );
               saveToLocalStorage(updatedHistory);
               return updatedHistory;
@@ -324,12 +324,14 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
           }
           break;
 
-        case 'DELETE':
+        case "DELETE":
           // Diagnosis deleted from another device
           if (oldRecord && oldRecord.user_id === user?.id) {
-            console.log('🗑️ Diagnosis deleted remotely:', oldRecord.id);
-            setHistory(prevHistory => {
-              const updatedHistory = prevHistory.filter(item => item.id !== oldRecord.id);
+            console.log("🗑️ Diagnosis deleted remotely:", oldRecord.id);
+            setHistory((prevHistory) => {
+              const updatedHistory = prevHistory.filter(
+                (item) => item.id !== oldRecord.id,
+              );
               saveToLocalStorage(updatedHistory);
               return updatedHistory;
             });
@@ -337,127 +339,85 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
           break;
 
         default:
-          console.log('❓ Unknown real-time event:', eventType);
+          console.log("❓ Unknown real-time event:", eventType);
       }
 
       // Update last sync time
       const now = new Date();
       setLastSyncedAt(now);
       await AsyncStorage.setItem(LAST_SYNC_KEY, now.toISOString());
-
     } catch (error) {
-      console.error('❌ Failed to handle real-time change:', error);
+      console.error("❌ Failed to handle real-time change:", error);
     }
   };
 
-
-
   const loadHistory = async () => {
-
     try {
-
       setIsLoading(true);
 
-
-
       if (isOnline && user) {
-
         const remoteDiagnoses = await diagnosisService.getDiagnoses();
 
         setHistory([...remoteDiagnoses]);
 
-        await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(remoteDiagnoses));
-
-        
+        await AsyncStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(remoteDiagnoses),
+        );
 
         const now = new Date();
 
         setLastSyncedAt(now);
 
         await AsyncStorage.setItem(LAST_SYNC_KEY, now.toISOString());
-
       } else {
-
         const stored = await AsyncStorage.getItem(STORAGE_KEY);
 
         if (stored) {
-
           const parsed = JSON.parse(stored);
 
           setHistory([...parsed]);
-
         }
-
-
 
         const lastSync = await AsyncStorage.getItem(LAST_SYNC_KEY);
 
         if (lastSync) {
-
           setLastSyncedAt(new Date(lastSync));
-
         }
-
       }
-
     } catch (error) {
-
-      console.error('Failed to load history:', error);
-
-      
+      console.error("Failed to load history:", error);
 
       const stored = await AsyncStorage.getItem(STORAGE_KEY);
 
       if (stored) {
-
         const parsed = JSON.parse(stored);
 
         setHistory([...parsed]);
-
       }
-
     } finally {
-
       setIsLoading(false);
-
     }
-
   };
-
-
 
   const refreshHistory = async () => {
-
     if (!user) return;
 
-    console.log('refreshHistory: forcing fresh fetch from Supabase');
+    console.log("refreshHistory: forcing fresh fetch from Supabase");
 
     await loadHistory();
-
   };
-
-
 
   const saveToLocalStorage = async (newHistory: DiagnosisResult[]) => {
-
     try {
-
       await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newHistory));
-
     } catch (error) {
-
-      console.error('Failed to save to local storage:', error);
-
+      console.error("Failed to save to local storage:", error);
     }
-
   };
 
-
-
   const addToPendingQueue = async (operation: PendingOperation) => {
-
     try {
-
       const queueStr = await AsyncStorage.getItem(PENDING_QUEUE_KEY);
 
       const queue: PendingOperation[] = queueStr ? JSON.parse(queueStr) : [];
@@ -465,66 +425,71 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       queue.push(operation);
 
       await AsyncStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(queue));
-
     } catch (error) {
-
-      console.error('Failed to add to pending queue:', error);
-
+      console.error("Failed to add to pending queue:", error);
     }
-
   };
-
-
 
   // Retry wrapper function
   const retryOperation = async (
     operation: () => Promise<any>,
     operationType: string,
-    operationId: string
+    operationId: string,
   ): Promise<any | null> => {
     let lastError: Error | null = null;
-    
+
     for (let attempt = 0; attempt < RETRY_CONFIG.maxAttempts; attempt++) {
       try {
-        console.log(`Attempting ${operationType} operation ${operationId}, attempt ${attempt + 1}/${RETRY_CONFIG.maxAttempts}`);
+        console.log(
+          `Attempting ${operationType} operation ${operationId}, attempt ${attempt + 1}/${RETRY_CONFIG.maxAttempts}`,
+        );
         const result = await operation();
-        
+
         if (attempt > 0) {
-          console.log(`✅ ${operationType} operation ${operationId} succeeded on attempt ${attempt + 1}`);
+          console.log(
+            `✅ ${operationType} operation ${operationId} succeeded on attempt ${attempt + 1}`,
+          );
         }
-        
+
         return result;
       } catch (error) {
         lastError = error as Error;
-        
+
         // Check if error is retryable
         if (!isRetryableError(lastError)) {
-          console.error(`❌ ${operationType} operation ${operationId} failed with non-retryable error:`, lastError);
+          console.error(
+            `❌ ${operationType} operation ${operationId} failed with non-retryable error:`,
+            lastError,
+          );
           return null;
         }
-        
-        console.error(`⚠️ ${operationType} operation ${operationId} attempt ${attempt + 1} failed:`, lastError);
-        
+
+        console.error(
+          `⚠️ ${operationType} operation ${operationId} attempt ${attempt + 1} failed:`,
+          lastError,
+        );
+
         // If this is the last attempt, don't wait
         if (attempt === RETRY_CONFIG.maxAttempts - 1) {
-          console.error(`❌ ${operationType} operation ${operationId} failed after ${RETRY_CONFIG.maxAttempts} attempts`);
+          console.error(
+            `❌ ${operationType} operation ${operationId} failed after ${RETRY_CONFIG.maxAttempts} attempts`,
+          );
           continue;
         }
-        
+
         // Wait before retrying
         const delay = exponentialBackoff(attempt);
-        console.log(`⏳ Retrying ${operationType} operation ${operationId} in ${Math.round(delay)}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        console.log(
+          `⏳ Retrying ${operationType} operation ${operationId} in ${Math.round(delay)}ms...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delay));
       }
     }
-    
+
     return null;
   };
 
-
-
   const syncPendingOperations = async () => {
-
     if (!user || !isOnline || isSyncing) return;
 
     try {
@@ -535,15 +500,22 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       let queue: PendingOperation[] = JSON.parse(queueStr);
       if (queue.length === 0) return;
 
-      console.log(`🔍 Checking ${queue.length} operations for invalid UUIDs...`);
+      console.log(
+        `🔍 Checking ${queue.length} operations for invalid UUIDs...`,
+      );
       const originalLength = queue.length;
-      queue = queue.filter(operation => {
-        if (operation.type === 'add' && operation.data?.id) {
+      queue = queue.filter((operation) => {
+        if (operation.type === "add" && operation.data?.id) {
           console.log(`🔍 Checking operation ID: ${operation.data.id}`);
           // Check if ID is a valid UUID format (contains hyphens and proper length)
-          const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operation.data.id);
+          const isValidUUID =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              operation.data.id,
+            );
           if (!isValidUUID) {
-            console.log(`🧹 Removing invalid UUID from queue: ${operation.data.id}`);
+            console.log(
+              `🧹 Removing invalid UUID from queue: ${operation.data.id}`,
+            );
             return false;
           }
         }
@@ -552,7 +524,9 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       // Update queue if we removed invalid items
       if (queue.length !== originalLength) {
-        console.log(`🧹 Cleaned ${originalLength - queue.length} invalid UUIDs from pending queue`);
+        console.log(
+          `🧹 Cleaned ${originalLength - queue.length} invalid UUIDs from pending queue`,
+        );
         if (queue.length === 0) {
           await AsyncStorage.removeItem(PENDING_QUEUE_KEY);
           await loadHistory();
@@ -569,159 +543,109 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       const successfulOperations: PendingOperation[] = [];
       const failedOperations: PendingOperation[] = [];
 
-
-
       for (const operation of queue) {
-
         let success = false;
 
-        if (operation.type === 'add' && operation.data) {
-
+        if (operation.type === "add" && operation.data) {
           const result = await retryOperation(
-
             () => diagnosisService.upsertDiagnosis(operation.data!),
 
-            'upsert',
+            "upsert",
 
-            operation.id
-
+            operation.id,
           );
 
           success = result !== null;
-
-        } else if (operation.type === 'delete') {
-
+        } else if (operation.type === "delete") {
           const result = await retryOperation(
-
             () => diagnosisService.deleteDiagnosis(operation.id),
 
-            'delete',
+            "delete",
 
-            operation.id
-
+            operation.id,
           );
 
           success = result !== null;
-
-        } else if (operation.type === 'clear') {
-
+        } else if (operation.type === "clear") {
           const result = await retryOperation(
-
             () => diagnosisService.clearAllDiagnoses(),
 
-            'clear',
+            "clear",
 
-            operation.id
-
+            operation.id,
           );
 
           success = result !== null;
-
         }
-
-
 
         if (success) {
-
           successfulOperations.push(operation);
-
         } else {
-
           failedOperations.push(operation);
-
         }
-
       }
-
-
 
       // Update queue with only failed operations
 
       if (failedOperations.length === 0) {
-
-        console.log('✅ All operations synced successfully');
+        console.log("✅ All operations synced successfully");
 
         await AsyncStorage.removeItem(PENDING_QUEUE_KEY);
 
         setSyncError(null);
-
       } else {
+        console.log(
+          `⚠️ ${failedOperations.length} operations failed to sync, keeping in queue`,
+        );
 
-        console.log(`⚠️ ${failedOperations.length} operations failed to sync, keeping in queue`);
-
-        await AsyncStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(failedOperations));
+        await AsyncStorage.setItem(
+          PENDING_QUEUE_KEY,
+          JSON.stringify(failedOperations),
+        );
 
         // Set sync error if there are failed operations
         const errorCount = failedOperations.length;
-        setSyncError(`${errorCount} diagnosis${errorCount > 1 ? 'es' : ''} failed to sync due to invalid data`);
-
+        setSyncError(
+          `${errorCount} diagnosis${errorCount > 1 ? "es" : ""} failed to sync due to invalid data`,
+        );
       }
-
-
 
       // Refresh history if any operations succeeded
 
       if (successfulOperations.length > 0) {
-
         await loadHistory();
-
       }
-
-
-
     } catch (error) {
-
-      console.error('Failed to sync pending operations:', error);
-
+      console.error("Failed to sync pending operations:", error);
     } finally {
-
       setIsSyncing(false);
-
     }
-
   };
 
-
-
-  const resolveConflict = async (local: DiagnosisResult, remote: DiagnosisResult): Promise<DiagnosisResult> => {
-
+  const resolveConflict = async (
+    local: DiagnosisResult,
+    remote: DiagnosisResult,
+  ): Promise<DiagnosisResult> => {
     const localTime = new Date(local.updated_at || local.date).getTime();
 
     const remoteTime = new Date(remote.updated_at || remote.date).getTime();
 
-
-
     if (remoteTime > localTime) {
-
       return remote;
-
     } else if (localTime > remoteTime) {
-
       return local;
-
     } else {
-
       return remote;
-
     }
-
   };
 
-
-
   const addDiagnosis = async (result: DiagnosisResult) => {
-
     try {
-
       const resultWithTimestamp = {
-
         ...result,
 
         updated_at: result.updated_at || new Date().toISOString(),
-
       };
-
-
 
       const newHistory = [resultWithTimestamp, ...history];
 
@@ -729,265 +653,200 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       await saveToLocalStorage(newHistory);
 
-
-
-      await AsyncStorage.setItem('lastDiagnosis', JSON.stringify(resultWithTimestamp));
-
-
+      await AsyncStorage.setItem(
+        "lastDiagnosis",
+        JSON.stringify(resultWithTimestamp),
+      );
 
       if (isOnline && user) {
-
         try {
-
-          const savedDiagnosis = await diagnosisService.upsertDiagnosis(resultWithTimestamp);
-
+          const savedDiagnosis =
+            await diagnosisService.upsertDiagnosis(resultWithTimestamp);
+          // Replace the optimistically-added entry with the server response
+          // (which has imageUrl properly populated from image_url)
           const updatedHistory = [savedDiagnosis, ...history];
-
           setHistory(updatedHistory);
-
           await saveToLocalStorage(updatedHistory);
-
-          
 
           const now = new Date();
 
           setLastSyncedAt(now);
 
           await AsyncStorage.setItem(LAST_SYNC_KEY, now.toISOString());
-
         } catch (error) {
-
-          console.error('Failed to save to Supabase, queuing for later:', error);
+          console.error(
+            "Failed to save to Supabase, queuing for later:",
+            error,
+          );
 
           await addToPendingQueue({
-
             id: resultWithTimestamp.id,
 
-            type: 'add',
+            type: "add",
 
             data: resultWithTimestamp,
 
             timestamp: new Date().toISOString(),
-
           });
-
         }
-
       } else {
-
         await addToPendingQueue({
-
           id: resultWithTimestamp.id,
 
-          type: 'add',
+          type: "add",
 
           data: resultWithTimestamp,
 
           timestamp: new Date().toISOString(),
-
         });
-
       }
-
     } catch (error) {
-
-      console.error('Failed to add diagnosis:', error);
+      console.error("Failed to add diagnosis:", error);
 
       throw error;
-
     } finally {
       // Send notification for completed diagnosis
       try {
         await notificationService.sendLocalNotification({
-          type: 'diagnosis_complete',
-          title: 'Diagnosis Complete',
-          body: `Your ${result.type === 'image' ? 'image' : 'symptom'} analysis is ready.`,
+          type: "diagnosis_complete",
+          title: "Diagnosis Complete",
+          body: `Your ${result.type === "image" ? "image" : "symptom"} analysis is ready.`,
           data: {
             diagnosisId: result.id,
-            type: result.type
-          }
+            type: result.type,
+          },
         });
       } catch (notifError) {
-        console.log('⚠️ Could not send notification:', notifError);
+        console.log("⚠️ Could not send notification:", notifError);
       }
     }
-
   };
 
-
-
   const clearHistory = async () => {
-
     try {
-
       setHistory([]);
 
       await AsyncStorage.removeItem(STORAGE_KEY);
 
-
-
       if (isOnline && user) {
-
         try {
-
           await diagnosisService.clearAllDiagnoses();
-
-          
 
           const now = new Date();
 
           setLastSyncedAt(now);
 
           await AsyncStorage.setItem(LAST_SYNC_KEY, now.toISOString());
-
         } catch (error) {
-
-          console.error('Failed to clear from Supabase, queuing for later:', error);
+          console.error(
+            "Failed to clear from Supabase, queuing for later:",
+            error,
+          );
 
           await addToPendingQueue({
+            id: "clear-all",
 
-            id: 'clear-all',
-
-            type: 'clear',
+            type: "clear",
 
             timestamp: new Date().toISOString(),
-
           });
-
         }
-
       } else {
-
         await addToPendingQueue({
+          id: "clear-all",
 
-          id: 'clear-all',
-
-          type: 'clear',
+          type: "clear",
 
           timestamp: new Date().toISOString(),
-
         });
-
       }
-
     } catch (error) {
-
-      console.error('Failed to clear history:', error);
+      console.error("Failed to clear history:", error);
 
       throw error;
-
     }
-
   };
 
-
-
   const deleteDiagnosis = async (id: string) => {
-
     try {
-
-      const newHistory = history.filter(item => item.id !== id);
+      const newHistory = history.filter((item) => item.id !== id);
 
       setHistory(newHistory);
 
       await saveToLocalStorage(newHistory);
 
-
-
       if (isOnline && user) {
-
         try {
-
           await diagnosisService.deleteDiagnosis(id);
-
-          
 
           const now = new Date();
 
           setLastSyncedAt(now);
 
           await AsyncStorage.setItem(LAST_SYNC_KEY, now.toISOString());
-
         } catch (error) {
-
-          console.error('Failed to delete from Supabase, queuing for later:', error);
+          console.error(
+            "Failed to delete from Supabase, queuing for later:",
+            error,
+          );
 
           await addToPendingQueue({
-
             id,
 
-            type: 'delete',
+            type: "delete",
 
             timestamp: new Date().toISOString(),
-
           });
-
         }
-
       } else {
-
         await addToPendingQueue({
-
           id,
 
-          type: 'delete',
+          type: "delete",
 
           timestamp: new Date().toISOString(),
-
         });
-
       }
-
     } catch (error) {
-
-      console.error('Failed to delete diagnosis:', error);
+      console.error("Failed to delete diagnosis:", error);
 
       throw error;
-
     }
-
   };
-
-
 
   const clearSyncError = () => {
-
     setSyncError(null);
-
   };
 
-
-
   const clearPendingQueue = async () => {
-
     try {
-
       await AsyncStorage.removeItem(PENDING_QUEUE_KEY);
 
       setSyncError(null);
 
-      console.log('Pending queue cleared');
-
+      console.log("Pending queue cleared");
     } catch (error) {
-
-      console.error('Failed to clear pending queue:', error);
-
+      console.error("Failed to clear pending queue:", error);
     }
   };
 
   // Image-related functions
   const addImageDiagnosis = async (imageUri: string, analysisResult: any) => {
     try {
-      console.log('🖼️ Adding image diagnosis...');
-      
+      console.log("🖼️ Adding image diagnosis...");
+
       // Upload image to Supabase first
-      const { uploadDiagnosisImage } = await import('../services/imageService');
-      const uploadResult = await uploadDiagnosisImage(imageUri, analysisResult.id || 'temp', user!.id);
-      
+      const { uploadDiagnosisImage } = await import("../services/imageService");
+      const uploadResult = await uploadDiagnosisImage(
+        imageUri,
+        analysisResult.id || "temp",
+        user!.id,
+      );
+
       // Create a diagnosis result with image information
       const imageDiagnosis: DiagnosisResult = {
         ...analysisResult,
-        type: 'image',
+        type: "image",
         imageUri,
         imageUrl: uploadResult.url,
         imagePath: uploadResult.path,
@@ -998,56 +857,63 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       // Use the existing addDiagnosis function
       await addDiagnosis(imageDiagnosis);
-      
-      console.log('✅ Image diagnosis added successfully with Supabase URL');
+
+      console.log("✅ Image diagnosis added successfully with Supabase URL");
     } catch (error) {
-      console.error('❌ Failed to add image diagnosis:', error);
+      console.error("❌ Failed to add image diagnosis:", error);
       throw error;
     }
   };
 
   const deleteDiagnosisImage = async (diagnosisId: string) => {
     try {
-      console.log('🗑️ Deleting diagnosis image...', diagnosisId);
-      
+      console.log("🗑️ Deleting diagnosis image...", diagnosisId);
+
       // Find the diagnosis with the image
-      const diagnosis = history.find(d => d.id === diagnosisId);
-      
+      const diagnosis = history.find((d) => d.id === diagnosisId);
+
       if (diagnosis?.imagePath) {
         // Delete image from storage
-        const { deleteImage } = await import('../services/imageService');
-        await deleteImage('diagnosis-images', diagnosis.imagePath);
+        const { deleteImage } = await import("../services/imageService");
+        await deleteImage("diagnosis-images", diagnosis.imagePath);
       }
-      
+
       // Delete the diagnosis record
       await deleteDiagnosis(diagnosisId);
-      
-      console.log('✅ Diagnosis image deleted successfully');
+
+      console.log("✅ Diagnosis image deleted successfully");
     } catch (error) {
-      console.error('❌ Failed to delete diagnosis image:', error);
+      console.error("❌ Failed to delete diagnosis image:", error);
       throw error;
     }
   };
 
-  const updateDiagnosisImage = async (diagnosisId: string, imageUri: string) => {
+  const updateDiagnosisImage = async (
+    diagnosisId: string,
+    imageUri: string,
+  ) => {
     try {
-      console.log('🔄 Updating diagnosis image...', diagnosisId);
-      
+      console.log("🔄 Updating diagnosis image...", diagnosisId);
+
       // Find the existing diagnosis
-      const diagnosis = history.find(d => d.id === diagnosisId);
+      const diagnosis = history.find((d) => d.id === diagnosisId);
       if (!diagnosis) {
-        throw new Error('Diagnosis not found');
+        throw new Error("Diagnosis not found");
       }
 
       // Delete old image if it exists
       if (diagnosis.imagePath) {
-        const { deleteImage } = await import('../services/imageService');
-        await deleteImage('diagnosis-images', diagnosis.imagePath);
+        const { deleteImage } = await import("../services/imageService");
+        await deleteImage("diagnosis-images", diagnosis.imagePath);
       }
 
       // Upload new image
-      const { uploadDiagnosisImage } = await import('../services/imageService');
-      const uploadResult = await uploadDiagnosisImage(imageUri, diagnosisId, user!.id);
+      const { uploadDiagnosisImage } = await import("../services/imageService");
+      const uploadResult = await uploadDiagnosisImage(
+        imageUri,
+        diagnosisId,
+        user!.id,
+      );
 
       // Update diagnosis with new image information
       const updatedDiagnosis: DiagnosisResult = {
@@ -1060,8 +926,8 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       };
 
       // Update in local state
-      const newHistory = history.map(d => 
-        d.id === diagnosisId ? updatedDiagnosis : d
+      const newHistory = history.map((d) =>
+        d.id === diagnosisId ? updatedDiagnosis : d,
       );
       setHistory(newHistory);
       await saveToLocalStorage(newHistory);
@@ -1071,29 +937,36 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
         await diagnosisService.upsertDiagnosis(updatedDiagnosis);
       }
 
-      console.log('✅ Diagnosis image updated successfully');
+      console.log("✅ Diagnosis image updated successfully");
     } catch (error) {
-      console.error('❌ Failed to update diagnosis image:', error);
+      console.error("❌ Failed to update diagnosis image:", error);
       throw error;
     }
   };
 
   // Edge Function methods (DISABLED - using client-side only)
-  const diagnoseWithEdgeFunctionMethod = async (type: 'text' | 'image', input: string, symptoms?: string[], imageData?: string) => {
-    console.log('🔄 Edge Functions disabled, using client-side diagnosis...');
-    throw new Error('Edge Functions disabled - use client-side diagnosis instead');
+  const diagnoseWithEdgeFunctionMethod = async (
+    type: "text" | "image",
+    input: string,
+    symptoms?: string[],
+    imageData?: string,
+  ) => {
+    console.log("🔄 Edge Functions disabled, using client-side diagnosis...");
+    throw new Error(
+      "Edge Functions disabled - use client-side diagnosis instead",
+    );
   };
 
   const getUsageInfoMethod = async () => {
     if (!user) {
-      throw new Error('User not authenticated');
+      throw new Error("User not authenticated");
     }
 
     try {
       const usage = await getUsageInfo(user.id);
       return usage;
     } catch (error) {
-      console.error('❌ Error getting usage info:', error);
+      console.error("❌ Error getting usage info:", error);
       throw error;
     }
   };
@@ -1107,19 +980,14 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
       const canMake = await canMakeDiagnosisRequest(user.id);
       return canMake;
     } catch (error) {
-      console.error('❌ Error checking request limits:', error);
+      console.error("❌ Error checking request limits:", error);
       return { allowed: false };
     }
   };
 
-
-
   return (
-
     <DiagnosisContext.Provider
-
       value={{
-
         history,
 
         addDiagnosis,
@@ -1153,31 +1021,19 @@ export const DiagnosisProvider: React.FC<{ children: ReactNode }> = ({ children 
         diagnoseWithEdgeFunction: diagnoseWithEdgeFunctionMethod,
         getUsageInfo: getUsageInfoMethod,
         canMakeDiagnosisRequest: canMakeDiagnosisRequestMethod,
-
       }}
-
     >
-
       {children}
-
     </DiagnosisContext.Provider>
-
   );
-
 };
 
-
-
 export const useDiagnosis = () => {
-
   const context = useContext(DiagnosisContext);
 
   if (context === undefined) {
-
-    throw new Error('useDiagnosis must be used within a DiagnosisProvider');
-
+    throw new Error("useDiagnosis must be used within a DiagnosisProvider");
   }
 
   return context;
-
 };

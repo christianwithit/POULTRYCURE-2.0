@@ -1,8 +1,10 @@
 // services/api.ts
-import Constants from 'expo-constants';
-import * as Crypto from 'expo-crypto';
-import { matchDisease } from '../data/disease';
-import { ApiResponse, DiagnosisResult } from '../types/types';
+import Constants from "expo-constants";
+import * as Crypto from "expo-crypto";
+import * as FileSystem from "expo-file-system/legacy";
+import { manipulateAsync, SaveFormat } from "expo-image-manipulator";
+import { matchDisease } from "../data/disease";
+import { ApiResponse, DiagnosisResult } from "../types/types";
 
 // Generate UUID v4 for Supabase compatibility
 const generateUUID = (): string => {
@@ -10,46 +12,152 @@ const generateUUID = (): string => {
   const hex = Array.from(bytes)
     .map((b: number, i: number) => {
       // Set version (4) and variant bits
-      const hexByte = b.toString(16).padStart(2, '0');
-      if (i === 6) return (parseInt(hexByte, 16) & 0x0f | 0x40).toString(16).padStart(2, '0');
-      if (i === 8) return (parseInt(hexByte, 16) & 0x3f | 0x80).toString(16).padStart(2, '0');
+      const hexByte = b.toString(16).padStart(2, "0");
+      if (i === 6)
+        return ((parseInt(hexByte, 16) & 0x0f) | 0x40)
+          .toString(16)
+          .padStart(2, "0");
+      if (i === 8)
+        return ((parseInt(hexByte, 16) & 0x3f) | 0x80)
+          .toString(16)
+          .padStart(2, "0");
       return hexByte;
     })
-    .join('');
-  
+    .join("");
+
   return [
     hex.substring(0, 8),
     hex.substring(8, 12),
     hex.substring(12, 16),
     hex.substring(16, 20),
-    hex.substring(20, 32)
-  ].join('-');
+    hex.substring(20, 32),
+  ].join("-");
 };
 
 // API key validation and security
 // Use Constants.expoConfig.extra for production builds, fallback to process.env for development
-const GEMINI_API_KEY = Constants.expoConfig?.extra?.geminiApiKey || process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+const GEMINI_API_KEY =
+  Constants.expoConfig?.extra?.geminiApiKey ||
+  process.env.EXPO_PUBLIC_GEMINI_API_KEY;
 
 // Log API key status (safe for production - doesn't expose key)
-console.log('=== API KEY DEBUG ===');
-console.log('Constants.expoConfig exists:', !!Constants.expoConfig);
-console.log('Constants.expoConfig.extra exists:', !!Constants.expoConfig?.extra);
-console.log('geminiApiKey from extra:', Constants.expoConfig?.extra?.geminiApiKey ? 'FOUND' : 'NOT FOUND');
-console.log('process.env key:', process.env.EXPO_PUBLIC_GEMINI_API_KEY ? 'FOUND' : 'NOT FOUND');
-console.log('Final GEMINI_API_KEY:', GEMINI_API_KEY ? 'YES' : 'NO');
+console.log("=== API KEY DEBUG ===");
+console.log("Constants.expoConfig exists:", !!Constants.expoConfig);
+console.log(
+  "Constants.expoConfig.extra exists:",
+  !!Constants.expoConfig?.extra,
+);
+console.log(
+  "geminiApiKey from extra:",
+  Constants.expoConfig?.extra?.geminiApiKey ? "FOUND" : "NOT FOUND",
+);
+console.log(
+  "process.env key:",
+  process.env.EXPO_PUBLIC_GEMINI_API_KEY ? "FOUND" : "NOT FOUND",
+);
+console.log("Final GEMINI_API_KEY:", GEMINI_API_KEY ? "YES" : "NO");
 if (GEMINI_API_KEY) {
-  console.log('First 10 chars:', GEMINI_API_KEY.substring(0, 10));
-  console.log('Key length:', GEMINI_API_KEY.length);
+  console.log("First 10 chars:", GEMINI_API_KEY.substring(0, 10));
+  console.log("Key length:", GEMINI_API_KEY.length);
 }
-console.log('===================');
+console.log("===================");
 
 // Validate API key format
-if (GEMINI_API_KEY && !GEMINI_API_KEY.startsWith('AIza')) {
+if (GEMINI_API_KEY && !GEMINI_API_KEY.startsWith("AIza")) {
   console.warn('⚠️ API key format appears invalid - should start with "AIza"');
 }
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://your-api.com';
-const API_KEY = process.env.EXPO_PUBLIC_API_KEY || '';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "https://your-api.com";
+const API_KEY = process.env.EXPO_PUBLIC_API_KEY || "";
+
+// Retryable HTTP status codes (transient errors)
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES = 2; // reduced — we now have model fallback too
+const BASE_DELAY_MS = 1000; // 1 second
+
+// Model fallback chain — tries each in order on 503/overload
+// gemini-2.5-flash-lite has higher rate limits and lower cost as fallback
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
+];
+
+/**
+ * Fetch with exponential backoff retry for transient errors.
+ * Throws on non-retryable errors or after exhausting retries.
+ */
+async function fetchWithRetry(
+  url: string,
+  options: RequestInit,
+  retries = MAX_RETRIES,
+): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const response = await fetch(url, options);
+
+    if (response.ok || !RETRYABLE_STATUSES.has(response.status)) {
+      return response;
+    }
+
+    // 429 = quota exhausted — retrying same model won't help, bail immediately
+    if (response.status === 429) {
+      return response;
+    }
+
+    if (attempt < retries) {
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt); // 1s, 2s
+      console.warn(
+        `Gemini API returned ${response.status}. Retrying in ${delay}ms... (attempt ${attempt + 1}/${retries})`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    } else {
+      return response;
+    }
+  }
+  return fetch(url, options);
+}
+
+/**
+ * Try each model in GEMINI_MODELS until one succeeds or all fail with 503.
+ * Returns the successful Response, or the last failed Response.
+ */
+async function fetchWithModelFallback(body: object): Promise<Response> {
+  let lastResponse: Response | null = null;
+
+  for (const model of GEMINI_MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`;
+    const response = await fetchWithRetry(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (response.ok) {
+      if (model !== GEMINI_MODELS[0]) {
+        console.log(`✅ Gemini model fallback succeeded with: ${model}`);
+      }
+      return response;
+    }
+
+    lastResponse = response;
+
+    // Only fall through to next model on overload/quota errors
+    // Auth/not-found errors won't be fixed by switching models
+    if (
+      response.status === 403 ||
+      response.status === 400 ||
+      response.status === 404
+    ) {
+      return response;
+    }
+
+    console.warn(
+      `Model ${model} unavailable (${response.status}), trying next model...`,
+    );
+  }
+
+  return lastResponse!;
+}
 
 export class DiagnosisAPI {
   /**
@@ -65,38 +173,53 @@ export class DiagnosisAPI {
 
     // Check if API key exists
     if (!GEMINI_API_KEY) {
-      errors.push('EXPO_PUBLIC_GEMINI_API_KEY is not set in environment variables');
+      errors.push(
+        "EXPO_PUBLIC_GEMINI_API_KEY is not set in environment variables",
+      );
     } else {
       // Check API key format
-      if (!GEMINI_API_KEY.startsWith('AIza')) {
-        warnings.push('API key format appears invalid - should start with "AIza"');
+      if (!GEMINI_API_KEY.startsWith("AIza")) {
+        warnings.push(
+          'API key format appears invalid - should start with "AIza"',
+        );
       }
-      
+
       // Check API key length (typical Google API keys are 39 characters)
       if (GEMINI_API_KEY.length < 30) {
-        warnings.push('API key appears too short - may be incomplete');
+        warnings.push("API key appears too short - may be incomplete");
       }
     }
 
     // Check model configuration
     const model = process.env.EXPO_PUBLIC_GEMINI_MODEL;
-    if (model && !['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-flash-latest', 'gemini-pro-latest'].includes(model)) {
+    if (
+      model &&
+      ![
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemini-flash-latest",
+        "gemini-pro-latest",
+      ].includes(model)
+    ) {
       warnings.push(`Configured model "${model}" may not be supported`);
     }
 
     return {
       valid: errors.length === 0,
       errors,
-      warnings
+      warnings,
     };
   }
   /**
    * Analyze symptoms using Gemini AI with fallback to local analysis
    */
-  static async analyzeSymptoms(symptoms: string): Promise<ApiResponse<DiagnosisResult>> {
+  static async analyzeSymptoms(
+    symptoms: string,
+  ): Promise<ApiResponse<DiagnosisResult>> {
     // Check if fallback mode is forced
     if (this.forceFallback) {
-      console.log('Using forced fallback mode');
+      console.log("Using forced fallback mode");
       return this.localSymptomAnalysis(symptoms);
     }
 
@@ -113,66 +236,70 @@ export class DiagnosisAPI {
         "severity": "low|moderate|high"
       }`;
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      const response = await fetchWithModelFallback({
+        contents: [
+          {
+            parts: [
+              {
+                text: prompt,
+              },
+            ],
           },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: prompt
-              }]
-            }]
-          }),
-        }
-      );
+        ],
+      });
 
       if (!response.ok) {
         const errorData = await response.json();
         // Log error without exposing sensitive information
-        console.error('Gemini API Error:', {
+        console.error("Gemini API Error:", {
           status: response.status,
-          error: errorData.error?.message || 'Unknown error'
+          error: errorData.error?.message || "Unknown error",
+          note: RETRYABLE_STATUSES.has(response.status)
+            ? `Retried ${MAX_RETRIES} times before failing`
+            : "Non-retryable error",
         });
-        
+
         // Provide user-friendly error messages without exposing API details
-        let userMessage = 'AI analysis temporarily unavailable';
+        let userMessage = "AI analysis temporarily unavailable";
         if (response.status === 403) {
-          userMessage = 'API authentication failed - please check configuration';
+          userMessage =
+            "API authentication failed - please check configuration";
         } else if (response.status === 429) {
-          userMessage = 'API rate limit exceeded - please try again later';
+          userMessage = "Daily AI quota reached - local analysis used instead";
         } else if (response.status >= 500) {
-          userMessage = 'AI service temporarily unavailable - please try again later';
+          userMessage =
+            "AI service temporarily unavailable - please try again later";
         }
-        
+
         throw new Error(userMessage);
       }
 
       const data = await response.json();
       if (__DEV__) {
-        console.log('Gemini API Response received successfully');
+        console.log("Gemini API Response received successfully");
       }
 
       // Parse the response - handle markdown code blocks
       let responseText = data.candidates[0].content.parts[0].text;
-      
+
       // Remove markdown code blocks if present
-      if (responseText.includes('```json')) {
-        responseText = responseText.replace(/```json\s*/, '').replace(/```\s*$/, '');
-      } else if (responseText.includes('```')) {
-        responseText = responseText.replace(/```\s*/, '').replace(/```\s*$/, '');
+      if (responseText.includes("```json")) {
+        responseText = responseText
+          .replace(/```json\s*/, "")
+          .replace(/```\s*$/, "");
+      } else if (responseText.includes("```")) {
+        responseText = responseText
+          .replace(/```\s*/, "")
+          .replace(/```\s*$/, "");
       }
-      
+
       const aiResult = JSON.parse(responseText.trim());
-      
+
       return {
         success: true,
         data: {
           id: generateUUID(),
-          type: 'symptom',
+          type: "symptom",
           input: symptoms,
           diagnosis: aiResult.diagnosis,
           confidence: aiResult.confidence,
@@ -180,16 +307,15 @@ export class DiagnosisAPI {
           treatment: aiResult.treatment,
           severity: aiResult.severity,
           date: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
+          updated_at: new Date().toISOString(),
+        },
       };
-
     } catch (error: any) {
-      console.error('Full error:', JSON.stringify(error, null, 2));
-      console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
-      
-      console.log('Falling back to local diagnosis...');
+      console.error("Full error:", JSON.stringify(error, null, 2));
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+
+      console.log("Falling back to local diagnosis...");
       return this.localSymptomAnalysis(symptoms);
     }
   }
@@ -197,35 +323,37 @@ export class DiagnosisAPI {
   /**
    * Analyze image using Gemini AI with multimodal capabilities
    */
-  static async analyzeImage(imageUri: string): Promise<ApiResponse<DiagnosisResult>> {
+  static async analyzeImage(
+    imageUri: string,
+  ): Promise<ApiResponse<DiagnosisResult>> {
     // Check if fallback mode is forced
     if (this.forceFallback) {
-      console.log('Using forced fallback mode for image analysis');
+      console.log("Using forced fallback mode for image analysis");
       return {
         success: true,
         data: {
           id: generateUUID(),
-          type: 'image',
-          input: 'Image analysis (forced fallback)',
-          diagnosis: 'Image Analysis Unavailable (Fallback Mode)',
+          type: "image",
+          input: "Image analysis (forced fallback)",
+          diagnosis: "Image Analysis Unavailable (Fallback Mode)",
           confidence: 0,
           recommendations: [
-            'Fallback mode is enabled - AI analysis disabled',
-            'Please try symptom-based diagnosis instead',
-            'Or consult with a veterinarian for visual examination'
+            "Fallback mode is enabled - AI analysis disabled",
+            "Please try symptom-based diagnosis instead",
+            "Or consult with a veterinarian for visual examination",
           ],
-          severity: 'low',
+          severity: "low",
           date: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          imageUri
-        }
+          imageUri,
+        },
       };
     }
 
     try {
       // Convert image to base64
       const imageBase64 = await this.convertImageToBase64(imageUri);
-      
+
       const prompt = `You are a poultry disease diagnosis expert. Analyze this image of a poultry bird for signs of disease or health issues.
 
       Please examine the image for:
@@ -245,73 +373,71 @@ export class DiagnosisAPI {
         "reasoning": "What you observed in the image that led to this diagnosis"
       }`;
 
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
+      const response = await fetchWithModelFallback({
+        contents: [
+          {
+            parts: [
+              { text: prompt },
+              {
+                inline_data: {
+                  mime_type: "image/jpeg",
+                  data: imageBase64,
+                },
+              },
+            ],
           },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: "image/jpeg",
-                    data: imageBase64
-                  }
-                }
-              ]
-            }]
-          }),
-        }
-      );
+        ],
+      });
 
       if (!response.ok) {
         const errorData = await response.json();
         // Log error without exposing sensitive information
-        console.error('Gemini Image API Error:', {
+        console.error("Gemini Image API Error:", {
           status: response.status,
-          error: errorData.error?.message || 'Unknown error'
+          error: errorData.error?.message || "Unknown error",
         });
-        
+
         // Provide user-friendly error messages
-        let userMessage = 'Image analysis temporarily unavailable';
+        let userMessage = "Image analysis temporarily unavailable";
         if (response.status === 403) {
-          userMessage = 'API authentication failed - please check configuration';
+          userMessage =
+            "API authentication failed - please check configuration";
         } else if (response.status === 429) {
-          userMessage = 'API rate limit exceeded - please try again later';
+          userMessage = "Daily AI quota reached - local analysis used instead";
         } else if (response.status >= 500) {
-          userMessage = 'Image analysis service temporarily unavailable';
+          userMessage = "Image analysis service temporarily unavailable";
         }
-        
+
         throw new Error(userMessage);
       }
 
       const data = await response.json();
       if (__DEV__) {
-        console.log('Gemini Image Analysis Response received successfully');
+        console.log("Gemini Image Analysis Response received successfully");
       }
 
       // Parse the response - handle markdown code blocks
       let responseText = data.candidates[0].content.parts[0].text;
-      
+
       // Remove markdown code blocks if present
-      if (responseText.includes('```json')) {
-        responseText = responseText.replace(/```json\s*/, '').replace(/```\s*$/, '');
-      } else if (responseText.includes('```')) {
-        responseText = responseText.replace(/```\s*/, '').replace(/```\s*$/, '');
+      if (responseText.includes("```json")) {
+        responseText = responseText
+          .replace(/```json\s*/, "")
+          .replace(/```\s*$/, "");
+      } else if (responseText.includes("```")) {
+        responseText = responseText
+          .replace(/```\s*/, "")
+          .replace(/```\s*$/, "");
       }
-      
+
       const aiResult = JSON.parse(responseText.trim());
-      
+
       return {
         success: true,
         data: {
           id: generateUUID(),
-          type: 'image',
-          input: 'Image analysis',
+          type: "image",
+          input: "Image analysis",
           diagnosis: aiResult.diagnosis,
           confidence: aiResult.confidence,
           recommendations: aiResult.recommendations,
@@ -319,68 +445,76 @@ export class DiagnosisAPI {
           severity: aiResult.severity,
           date: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          imageUri
-        }
+          imageUri,
+        },
       };
-
     } catch (error: any) {
-      console.error('Full error:', JSON.stringify(error, null, 2));
-      console.error('Error message:', error.message);
-      console.error('Error stack:', error.stack);
-      
-      console.log('Falling back to local diagnosis...');
+      console.error("Full error:", JSON.stringify(error, null, 2));
+      console.error("Error message:", error.message);
+      console.error("Error stack:", error.stack);
+
+      console.log("Falling back to local diagnosis...");
       return {
         success: true,
         data: {
           id: generateUUID(),
-          type: 'image',
-          input: 'Image analysis (fallback)',
-          diagnosis: 'Image Analysis Unavailable',
+          type: "image",
+          input: "Image analysis (fallback)",
+          diagnosis: "Image Analysis Unavailable",
           confidence: 0,
           recommendations: [
-            'Image analysis service is currently unavailable',
-            'Please try symptom-based diagnosis instead',
-            'Or consult with a veterinarian for visual examination'
+            "Image analysis service is currently unavailable",
+            "Please try symptom-based diagnosis instead",
+            "Or consult with a veterinarian for visual examination",
           ],
-          severity: 'low',
+          severity: "low",
           date: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          imageUri
-        }
+          imageUri,
+        },
       };
     }
   }
 
   /**
-   * Convert image URI to base64 for API transmission
+   * Convert image URI to base64 for API transmission.
+   * Resizes to max 1024px on the longest side to keep payload small.
    */
   private static async convertImageToBase64(imageUri: string): Promise<string> {
     try {
-      // For React Native, we'll need to use fetch to get the image data
-      const response = await fetch(imageUri);
-      const blob = await response.blob();
-      
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64data = reader.result as string;
-          // Remove the data:image/jpeg;base64, prefix
-          const base64 = base64data.split(',')[1];
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
+      // Resize to fit within 1024x1024 — manipulateAsync preserves aspect ratio
+      // when only one dimension is specified, so we resize by width unconditionally.
+      // This avoids needing Image.getSize (which is unreliable outside components).
+      const compressed = await manipulateAsync(
+        imageUri,
+        [{ resize: { width: 1024 } }],
+        {
+          compress: 0.75,
+          format: SaveFormat.JPEG,
+        },
+      );
+
+      const base64 = await FileSystem.readAsStringAsync(compressed.uri, {
+        encoding: FileSystem.EncodingType.Base64,
       });
+
+      FileSystem.deleteAsync(compressed.uri, { idempotent: true }).catch(
+        () => {},
+      );
+
+      return base64;
     } catch (error) {
-      console.error('Image conversion error:', error);
-      throw new Error('Failed to convert image to base64');
+      console.error("Image conversion error:", error);
+      throw new Error("Failed to process image for analysis");
     }
   }
 
   /**
    * Local symptom analysis fallback method
    */
-  private static async localSymptomAnalysis(symptoms: string): Promise<ApiResponse<DiagnosisResult>> {
+  private static async localSymptomAnalysis(
+    symptoms: string,
+  ): Promise<ApiResponse<DiagnosisResult>> {
     const matches = matchDisease(symptoms);
 
     if (matches.length === 0) {
@@ -388,30 +522,30 @@ export class DiagnosisAPI {
         success: true,
         data: {
           id: generateUUID(),
-          type: 'symptom',
+          type: "symptom",
           input: symptoms,
-          diagnosis: 'No Specific Disease Identified (Local Analysis)',
+          diagnosis: "No Specific Disease Identified (Local Analysis)",
           confidence: 0,
           recommendations: [
-            'Monitor bird closely for 24-48 hours',
-            'Ensure proper nutrition and clean water',
-            'Isolate bird if symptoms worsen',
-            'Consult with a veterinarian if concerned'
+            "Monitor bird closely for 24-48 hours",
+            "Ensure proper nutrition and clean water",
+            "Isolate bird if symptoms worsen",
+            "Consult with a veterinarian if concerned",
           ],
-          severity: 'low',
+          severity: "low",
           date: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }
+          updated_at: new Date().toISOString(),
+        },
       };
     }
 
     const topMatch = matches[0];
-    
+
     return {
       success: true,
       data: {
         id: generateUUID(),
-        type: 'symptom',
+        type: "symptom",
         input: symptoms,
         diagnosis: `${topMatch.disease} (Local Analysis)`,
         confidence: topMatch.confidence,
@@ -420,8 +554,8 @@ export class DiagnosisAPI {
         prevention: topMatch.info.prevention,
         severity: topMatch.info.severity,
         date: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      }
+        updated_at: new Date().toISOString(),
+      },
     };
   }
 
@@ -435,10 +569,12 @@ export class DiagnosisAPI {
       `Consult a veterinarian for proper diagnosis`,
     ];
 
-    if (diseaseInfo.severity === 'high') {
-      recommendations.unshift('⚠️ HIGH SEVERITY - Seek immediate veterinary attention');
-      recommendations.push('Monitor entire flock closely');
-      recommendations.push('Consider testing and culling if necessary');
+    if (diseaseInfo.severity === "high") {
+      recommendations.unshift(
+        "⚠️ HIGH SEVERITY - Seek immediate veterinary attention",
+      );
+      recommendations.push("Monitor entire flock closely");
+      recommendations.push("Consider testing and culling if necessary");
     }
 
     return recommendations;
@@ -448,43 +584,46 @@ export class DiagnosisAPI {
    * Test Gemini API connection with detailed logging
    */
   static async testConnection(): Promise<void> {
-    console.log('Testing Gemini API...');
-    console.log('API Key exists:', !!GEMINI_API_KEY);
-    
+    console.log("Testing Gemini API...");
+    console.log("API Key exists:", !!GEMINI_API_KEY);
+
     // Only show API key preview in development
     if (__DEV__) {
-      console.log('API Key preview:', GEMINI_API_KEY?.substring(0, 15) + '...');
+      console.log("API Key preview:", GEMINI_API_KEY?.substring(0, 15) + "...");
     }
-    
+
     try {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Hello' }] }]
+            contents: [{ parts: [{ text: "Hello" }] }],
           }),
-        }
+        },
       );
-      
-      console.log('Response status:', response.status);
-      
+
+      console.log("Response status:", response.status);
+
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ API Connection successful!');
+        console.log("✅ API Connection successful!");
         if (__DEV__) {
-          console.log('Response text:', data.candidates?.[0]?.content?.parts?.[0]?.text);
+          console.log(
+            "Response text:",
+            data.candidates?.[0]?.content?.parts?.[0]?.text,
+          );
         }
       } else {
         const data = await response.json();
-        console.log('❌ API Error:', {
+        console.log("❌ API Error:", {
           status: response.status,
-          message: data.error?.message || 'Unknown error'
+          message: data.error?.message || "Unknown error",
         });
       }
     } catch (error: any) {
-      console.error('❌ Connection failed:', error.message);
+      console.error("❌ Connection failed:", error.message);
     }
   }
 
@@ -497,16 +636,16 @@ export class DiagnosisAPI {
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
         {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Hello' }] }]
+            contents: [{ parts: [{ text: "Hello" }] }],
           }),
-        }
+        },
       );
       return response.ok;
     } catch (error: any) {
-      console.error('Connection check failed:', error);
+      console.error("Connection check failed:", error);
       return false;
     }
   }
@@ -524,15 +663,15 @@ export class DiagnosisAPI {
       const isAvailable = await this.checkConnection();
       return {
         available: isAvailable,
-        model: process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash',
-        lastChecked: new Date().toISOString()
+        model: process.env.EXPO_PUBLIC_GEMINI_MODEL || "gemini-2.5-flash",
+        lastChecked: new Date().toISOString(),
       };
     } catch (error: any) {
       return {
         available: false,
-        model: process.env.EXPO_PUBLIC_GEMINI_MODEL || 'gemini-2.5-flash',
+        model: process.env.EXPO_PUBLIC_GEMINI_MODEL || "gemini-2.5-flash",
         lastChecked: new Date().toISOString(),
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -544,7 +683,7 @@ export class DiagnosisAPI {
 
   static toggleFallbackMode(enabled: boolean): void {
     this.forceFallback = enabled;
-    console.log(`Fallback mode ${enabled ? 'enabled' : 'disabled'}`);
+    console.log(`Fallback mode ${enabled ? "enabled" : "disabled"}`);
   }
 
   static isFallbackMode(): boolean {

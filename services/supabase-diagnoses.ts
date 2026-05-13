@@ -1,39 +1,46 @@
-import { supabase } from '../lib/supabase';
-import { DiagnosisResult } from '../types/types';
+import { supabase } from "../lib/supabase";
+import { DiagnosisResult } from "../types/types";
 
 export interface SupabaseDiagnosis {
   id: string;
   user_id: string;
-  type: 'symptom' | 'image';
+  type: "symptom" | "image";
   input: string;
   diagnosis: string;
   confidence: number;
   recommendations: string[];
   treatment?: string;
   prevention?: string;
-  severity: 'low' | 'moderate' | 'high';
+  severity: "low" | "moderate" | "high";
   image_url?: string;
   created_at: string;
   updated_at: string;
 }
 
-const normalizeSeverity = (severity: string): 'low' | 'moderate' | 'high' => {
+const normalizeSeverity = (severity: string): "low" | "moderate" | "high" => {
   const severityLower = severity.toLowerCase();
-  
-  if (severityLower.includes('low') || severityLower.includes('mild')) {
-    return 'low';
+
+  if (severityLower.includes("low") || severityLower.includes("mild")) {
+    return "low";
   }
-  if (severityLower.includes('high') || severityLower.includes('severe') || severityLower.includes('critical')) {
-    return 'high';
+  if (
+    severityLower.includes("high") ||
+    severityLower.includes("severe") ||
+    severityLower.includes("critical")
+  ) {
+    return "high";
   }
-  if (severityLower.includes('moderate') || severityLower.includes('medium')) {
-    return 'moderate';
+  if (severityLower.includes("moderate") || severityLower.includes("medium")) {
+    return "moderate";
   }
-  
-  return 'low';
+
+  return "low";
 };
 
-const mapToSupabaseDiagnosis = (diagnosis: DiagnosisResult, userId: string): Omit<SupabaseDiagnosis, 'created_at' | 'updated_at'> => {
+const mapToSupabaseDiagnosis = (
+  diagnosis: DiagnosisResult,
+  userId: string,
+): Omit<SupabaseDiagnosis, "created_at" | "updated_at"> => {
   return {
     id: diagnosis.id,
     user_id: userId,
@@ -45,11 +52,14 @@ const mapToSupabaseDiagnosis = (diagnosis: DiagnosisResult, userId: string): Omi
     treatment: diagnosis.treatment,
     prevention: diagnosis.prevention,
     severity: normalizeSeverity(diagnosis.severity),
-    image_url: diagnosis.imageUri,
+    image_url: diagnosis.imageUrl || diagnosis.imageUri, // prefer Supabase URL, fall back to local
   };
 };
 
-const mapToSupabaseDiagnosisWithTimestamp = (diagnosis: DiagnosisResult, userId: string): Omit<SupabaseDiagnosis, 'created_at'> => {
+const mapToSupabaseDiagnosisWithTimestamp = (
+  diagnosis: DiagnosisResult,
+  userId: string,
+): Omit<SupabaseDiagnosis, "created_at"> => {
   return {
     id: diagnosis.id,
     user_id: userId,
@@ -61,12 +71,14 @@ const mapToSupabaseDiagnosisWithTimestamp = (diagnosis: DiagnosisResult, userId:
     treatment: diagnosis.treatment,
     prevention: diagnosis.prevention,
     severity: normalizeSeverity(diagnosis.severity),
-    image_url: diagnosis.imageUri,
+    image_url: diagnosis.imageUrl || diagnosis.imageUri, // prefer Supabase URL, fall back to local
     updated_at: diagnosis.updated_at || new Date().toISOString(),
   };
 };
 
-const mapFromSupabaseDiagnosis = (supabaseDiagnosis: SupabaseDiagnosis): DiagnosisResult => {
+const mapFromSupabaseDiagnosis = (
+  supabaseDiagnosis: SupabaseDiagnosis,
+): DiagnosisResult => {
   return {
     id: supabaseDiagnosis.id,
     type: supabaseDiagnosis.type,
@@ -78,132 +90,165 @@ const mapFromSupabaseDiagnosis = (supabaseDiagnosis: SupabaseDiagnosis): Diagnos
     prevention: supabaseDiagnosis.prevention,
     severity: supabaseDiagnosis.severity,
     date: supabaseDiagnosis.created_at,
+    // Populate both fields so consumers can use either
     imageUri: supabaseDiagnosis.image_url,
+    imageUrl: supabaseDiagnosis.image_url,
     updated_at: supabaseDiagnosis.updated_at,
   };
 };
 
-export const saveDiagnosis = async (diagnosis: DiagnosisResult): Promise<DiagnosisResult> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+export const saveDiagnosis = async (
+  diagnosis: DiagnosisResult,
+): Promise<DiagnosisResult> => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
   const supabaseDiagnosis = mapToSupabaseDiagnosis(diagnosis, user.id);
 
   const { data, error } = await supabase
-    .from('diagnoses')
+    .from("diagnoses")
     .insert(supabaseDiagnosis)
     .select()
     .single();
 
   if (error) {
-    console.error('Error saving diagnosis:', error);
+    console.error("Error saving diagnosis:", error);
     throw new Error(error.message);
   }
 
   return mapFromSupabaseDiagnosis(data);
 };
 
-export const upsertDiagnosis = async (diagnosis: DiagnosisResult): Promise<DiagnosisResult> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+export const upsertDiagnosis = async (
+  diagnosis: DiagnosisResult,
+): Promise<DiagnosisResult> => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
-  const supabaseDiagnosis = mapToSupabaseDiagnosisWithTimestamp(diagnosis, user.id);
+  const supabaseDiagnosis = mapToSupabaseDiagnosisWithTimestamp(
+    diagnosis,
+    user.id,
+  );
 
   const { data, error } = await supabase
-    .from('diagnoses')
-    .upsert(supabaseDiagnosis, { onConflict: 'id' })
+    .from("diagnoses")
+    .upsert(supabaseDiagnosis, { onConflict: "id" })
     .select()
     .single();
 
   if (error) {
-    console.error('Error upserting diagnosis:', error);
+    console.error("Error upserting diagnosis:", error);
     throw new Error(error.message);
   }
 
   return mapFromSupabaseDiagnosis(data);
 };
 
-export const getDiagnoses = async (limit: number = 50, offset: number = 0): Promise<DiagnosisResult[]> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+export const getDiagnoses = async (
+  limit: number = 50,
+  offset: number = 0,
+): Promise<DiagnosisResult[]> => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
   const { data, error } = await supabase
-    .from('diagnoses')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
+    .from("diagnoses")
+    .select("*")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false })
     .range(offset, offset + limit - 1);
 
   if (error) {
-    console.error('Error fetching diagnoses:', error);
+    console.error("Error fetching diagnoses:", error);
     throw new Error(error.message);
   }
 
   return (data || []).map(mapFromSupabaseDiagnosis);
 };
 
-export const getDiagnosisById = async (id: string): Promise<DiagnosisResult | null> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+export const getDiagnosisById = async (
+  id: string,
+): Promise<DiagnosisResult | null> => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
   const { data, error } = await supabase
-    .from('diagnoses')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
+    .from("diagnoses")
+    .select("*")
+    .eq("id", id)
+    .eq("user_id", user.id)
     .single();
 
   if (error) {
-    if (error.code === 'PGRST116') {
+    if (error.code === "PGRST116") {
       return null;
     }
-    console.error('Error fetching diagnosis:', error);
+    console.error("Error fetching diagnosis:", error);
     throw new Error(error.message);
   }
 
   return mapFromSupabaseDiagnosis(data);
 };
 
-export const updateDiagnosis = async (id: string, updates: Partial<DiagnosisResult>): Promise<DiagnosisResult> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+export const updateDiagnosis = async (
+  id: string,
+  updates: Partial<DiagnosisResult>,
+): Promise<DiagnosisResult> => {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
-  const updateData: Partial<Omit<SupabaseDiagnosis, 'id' | 'user_id' | 'created_at' | 'updated_at'>> = {};
-  
+  const updateData: Partial<
+    Omit<SupabaseDiagnosis, "id" | "user_id" | "created_at" | "updated_at">
+  > = {};
+
   if (updates.input !== undefined) updateData.input = updates.input;
   if (updates.diagnosis !== undefined) updateData.diagnosis = updates.diagnosis;
-  if (updates.confidence !== undefined) updateData.confidence = updates.confidence;
-  if (updates.recommendations !== undefined) updateData.recommendations = updates.recommendations;
+  if (updates.confidence !== undefined)
+    updateData.confidence = updates.confidence;
+  if (updates.recommendations !== undefined)
+    updateData.recommendations = updates.recommendations;
   if (updates.treatment !== undefined) updateData.treatment = updates.treatment;
-  if (updates.prevention !== undefined) updateData.prevention = updates.prevention;
-  if (updates.severity !== undefined) updateData.severity = normalizeSeverity(updates.severity);
+  if (updates.prevention !== undefined)
+    updateData.prevention = updates.prevention;
+  if (updates.severity !== undefined)
+    updateData.severity = normalizeSeverity(updates.severity);
   if (updates.imageUri !== undefined) updateData.image_url = updates.imageUri;
 
   const { data, error } = await supabase
-    .from('diagnoses')
+    .from("diagnoses")
     .update(updateData)
-    .eq('id', id)
-    .eq('user_id', user.id)
+    .eq("id", id)
+    .eq("user_id", user.id)
     .select()
     .single();
 
   if (error) {
-    console.error('Error updating diagnosis:', error);
+    console.error("Error updating diagnosis:", error);
     throw new Error(error.message);
   }
 
@@ -211,33 +256,35 @@ export const updateDiagnosis = async (id: string, updates: Partial<DiagnosisResu
 };
 
 export const deleteDiagnosis = async (id: string): Promise<DiagnosisResult> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
   // First get the diagnosis to return it
   const { data: existingDiagnosis } = await supabase
-    .from('diagnoses')
-    .select('*')
-    .eq('id', id)
-    .eq('user_id', user.id)
+    .from("diagnoses")
+    .select("*")
+    .eq("id", id)
+    .eq("user_id", user.id)
     .single();
 
   if (!existingDiagnosis) {
-    throw new Error('Diagnosis not found');
+    throw new Error("Diagnosis not found");
   }
 
   // Then delete it
   const { error } = await supabase
-    .from('diagnoses')
+    .from("diagnoses")
     .delete()
-    .eq('id', id)
-    .eq('user_id', user.id);
+    .eq("id", id)
+    .eq("user_id", user.id);
 
   if (error) {
-    console.error('Error deleting diagnosis:', error);
+    console.error("Error deleting diagnosis:", error);
     throw new Error(error.message);
   }
 
@@ -245,37 +292,41 @@ export const deleteDiagnosis = async (id: string): Promise<DiagnosisResult> => {
 };
 
 export const clearAllDiagnoses = async (): Promise<void> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
   const { error } = await supabase
-    .from('diagnoses')
+    .from("diagnoses")
     .delete()
-    .eq('user_id', user.id);
+    .eq("user_id", user.id);
 
   if (error) {
-    console.error('Error clearing diagnoses:', error);
+    console.error("Error clearing diagnoses:", error);
     throw new Error(error.message);
   }
 };
 
 export const getDiagnosesCount = async (): Promise<number> => {
-  const { data: { user } } = await supabase.auth.getUser();
-  
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
   if (!user) {
-    throw new Error('User not authenticated');
+    throw new Error("User not authenticated");
   }
 
   const { count, error } = await supabase
-    .from('diagnoses')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', user.id);
+    .from("diagnoses")
+    .select("*", { count: "exact", head: true })
+    .eq("user_id", user.id);
 
   if (error) {
-    console.error('Error getting diagnoses count:', error);
+    console.error("Error getting diagnoses count:", error);
     throw new Error(error.message);
   }
 
