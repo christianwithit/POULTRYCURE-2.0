@@ -13,10 +13,9 @@ export default {
     },
     android: {
       adaptiveIcon: {
-        backgroundColor: "#E6F4FE",
+        // Cream/beige background matching the logo
+        backgroundColor: "#F0EAD6",
         foregroundImage: "./assets/images/android-icon-foreground.png",
-        backgroundImage: "./assets/images/android-icon-background.png",
-        monochromeImage: "./assets/images/android-icon-monochrome.png",
       },
       edgeToEdgeEnabled: true,
       predictiveBackGestureEnabled: false,
@@ -30,7 +29,6 @@ export default {
     },
     web: {
       output: "static",
-      favicon: "./assets/images/favicon.png",
     },
     plugins: [
       "expo-router",
@@ -60,9 +58,9 @@ export default {
           image: "./assets/images/splash-icon.png",
           imageWidth: 200,
           resizeMode: "contain",
-          backgroundColor: "#ffffff",
+          backgroundColor: "#F0EAD6",
           dark: {
-            backgroundColor: "#000000",
+            backgroundColor: "#1A1A1A",
           },
         },
       ],
@@ -75,7 +73,6 @@ export default {
       eas: {
         projectId: "07433470-772f-4c90-99d7-67d707480f2c",
       },
-      // This will read from environment variables during build
       geminiApiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY,
     },
   },

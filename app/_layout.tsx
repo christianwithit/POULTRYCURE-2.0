@@ -47,6 +47,10 @@ export default function RootLayout() {
                   name="settings"
                   options={{ headerShown: false }}
                 />
+                {/* debug/ is always registered since Expo Router discovers it from
+                    the filesystem. The screen component itself returns null in
+                    production — see app/debug/edge-test.tsx */}
+                <Stack.Screen name="debug" options={{ headerShown: false }} />
               </Stack>
             </AuthGuard>
           </DiagnosisProvider>

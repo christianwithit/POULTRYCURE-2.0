@@ -1,281 +1,280 @@
-// Mock dependencies
-jest.mock('../../services/auth');
-jest.mock('../../services/storage');
+// contexts/__tests__/AuthContext.test.ts
+// Tests the active Supabase-backed auth service (supabaseAuthService)
 
-import { authService } from '../../services/auth';
-import { storageManager } from '../../services/storage';
-import { User } from '../../types/types';
+jest.mock("../../services/supabase-auth");
+jest.mock("../../lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: jest.fn(),
+      getUser: jest.fn(),
+      signInWithPassword: jest.fn(),
+      signUp: jest.fn(),
+      signOut: jest.fn(),
+      onAuthStateChange: jest.fn(() => ({
+        data: { subscription: { unsubscribe: jest.fn() } },
+      })),
+    },
+    from: jest.fn(() => ({
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn(),
+    })),
+  },
+}));
 
-const mockAuthService = authService as jest.Mocked<typeof authService>;
-const mockStorageManager = storageManager as jest.Mocked<typeof storageManager>;
+import { supabaseAuthService } from "../../services/supabase-auth";
+import { User } from "../../types/types";
 
-// Mock user data
+const mockSupabaseAuth = supabaseAuthService as jest.Mocked<
+  typeof supabaseAuthService
+>;
+
 const mockUser: User = {
-  id: 'user_123',
-  name: 'Test User',
-  email: 'test@example.com',
-  createdAt: new Date('2024-01-01'),
-  updatedAt: new Date('2024-01-01'),
+  id: "uuid-1234-5678-abcd",
+  name: "Test User",
+  email: "test@example.com",
+  createdAt: new Date("2024-01-01"),
+  updatedAt: new Date("2024-01-01"),
 };
 
-describe('Authentication Integration Tests', () => {
+describe("Supabase Authentication Integration Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
-  describe('Complete Authentication Flow', () => {
-    it('should handle complete signup -> login -> logout workflow', async () => {
-      // Setup mocks for signup
-      mockStorageManager.getUser.mockResolvedValueOnce(null); // No existing user
-      mockAuthService.signup.mockResolvedValueOnce({
+  describe("Complete Authentication Flow", () => {
+    it("should handle signup -> login -> logout workflow", async () => {
+      mockSupabaseAuth.signup.mockResolvedValueOnce({
         success: true,
         user: mockUser,
-        token: 'session_token_123',
+        token: "supabase_access_token_123",
       });
 
-      // Setup mocks for login
-      mockStorageManager.getUser.mockResolvedValueOnce(mockUser);
-      mockStorageManager.getCredentials.mockResolvedValueOnce({
-        hashedPassword: 'hashed_password',
-        salt: 'salt_123',
-      });
-      mockAuthService.login.mockResolvedValueOnce({
+      mockSupabaseAuth.login.mockResolvedValueOnce({
         success: true,
         user: mockUser,
-        token: 'session_token_456',
+        token: "supabase_access_token_456",
       });
 
-      // Setup mocks for logout
-      mockAuthService.logout.mockResolvedValueOnce();
+      mockSupabaseAuth.logout.mockResolvedValueOnce();
 
-      // 1. Test Signup
-      const signupResult = await authService.signup({
-        name: 'Test User',
-        email: 'test@example.com',
-        password: 'password123',
-        confirmPassword: 'password123',
+      // 1. Signup
+      const signupResult = await supabaseAuthService.signup({
+        name: "Test User",
+        email: "test@example.com",
+        password: "Password123!",
+        confirmPassword: "Password123!",
       });
-
       expect(signupResult.success).toBe(true);
       expect(signupResult.user).toEqual(mockUser);
       expect(signupResult.token).toBeDefined();
 
-      // 2. Test Login
-      const loginResult = await authService.login({
-        email: 'test@example.com',
-        password: 'password123',
+      // 2. Login
+      const loginResult = await supabaseAuthService.login({
+        email: "test@example.com",
+        password: "Password123!",
       });
-
       expect(loginResult.success).toBe(true);
       expect(loginResult.user).toEqual(mockUser);
       expect(loginResult.token).toBeDefined();
 
-      // 3. Test Logout
-      await expect(authService.logout()).resolves.not.toThrow();
+      // 3. Logout
+      await expect(supabaseAuthService.logout()).resolves.not.toThrow();
     });
 
-    it('should handle session restoration on app initialization', async () => {
-      const mockSession = {
-        userId: mockUser.id,
-        token: 'session_token_123',
-        expiresAt: new Date(Date.now() + 86400000), // 24 hours from now
-        createdAt: new Date(),
-      };
+    it("should restore authenticated user on app initialization", async () => {
+      mockSupabaseAuth.getCurrentUser.mockResolvedValueOnce(mockUser);
+      mockSupabaseAuth.isAuthenticated.mockResolvedValueOnce(true);
 
-      mockStorageManager.getSession.mockResolvedValueOnce(mockSession);
-      mockStorageManager.getUser.mockResolvedValueOnce(mockUser);
-      mockAuthService.getCurrentUser.mockResolvedValueOnce(mockUser);
+      const currentUser = await supabaseAuthService.getCurrentUser();
+      const isAuthenticated = await supabaseAuthService.isAuthenticated();
 
-      const currentUser = await authService.getCurrentUser();
       expect(currentUser).toEqual(mockUser);
-
-      const isAuthenticated = await authService.isAuthenticated();
       expect(isAuthenticated).toBe(true);
     });
 
-    it('should handle expired session on app initialization', async () => {
-      const expiredSession = {
-        userId: mockUser.id,
-        token: 'session_token_123',
-        expiresAt: new Date(Date.now() - 86400000), // 24 hours ago
-        createdAt: new Date(),
-      };
+    it("should return null when no active session exists", async () => {
+      mockSupabaseAuth.getCurrentUser.mockResolvedValueOnce(null);
+      mockSupabaseAuth.isAuthenticated.mockResolvedValueOnce(false);
 
-      mockStorageManager.getSession.mockResolvedValueOnce(expiredSession);
-      mockAuthService.getCurrentUser.mockResolvedValueOnce(null);
-      mockAuthService.isAuthenticated.mockResolvedValueOnce(false);
+      const currentUser = await supabaseAuthService.getCurrentUser();
+      const isAuthenticated = await supabaseAuthService.isAuthenticated();
 
-      const currentUser = await authService.getCurrentUser();
       expect(currentUser).toBeNull();
-
-      const isAuthenticated = await authService.isAuthenticated();
       expect(isAuthenticated).toBe(false);
     });
   });
 
-  describe('Profile Management Integration', () => {
-    it('should handle profile updates after authentication', async () => {
-      // Setup authenticated user
-      mockAuthService.getCurrentUser.mockResolvedValueOnce(mockUser);
-      mockAuthService.isAuthenticated.mockResolvedValueOnce(true);
-
-      // Verify user is authenticated
-      const currentUser = await authService.getCurrentUser();
-      expect(currentUser).toEqual(mockUser);
-
-      // Mock profile update
-      const updatedUser = { ...mockUser, name: 'Updated Name' };
-      mockStorageManager.updateUser.mockResolvedValueOnce();
-      mockStorageManager.getUser.mockResolvedValueOnce(updatedUser);
-
-      // Simulate profile update
-      await storageManager.updateUser({ name: 'Updated Name' });
-      const refreshedUser = await storageManager.getUser();
-
-      expect(refreshedUser).toEqual(updatedUser);
-      expect(mockStorageManager.updateUser).toHaveBeenCalledWith({ name: 'Updated Name' });
-    });
-
-    it('should handle password change workflow', async () => {
-      // Setup authenticated user
-      mockAuthService.getCurrentUser.mockResolvedValueOnce(mockUser);
-      mockAuthService.changePassword.mockResolvedValueOnce();
-
-      const currentUser = await authService.getCurrentUser();
-      expect(currentUser).toEqual(mockUser);
-
-      // Test password change
-      await expect(
-        authService.changePassword('currentPassword', 'newPassword123')
-      ).resolves.not.toThrow();
-
-      expect(mockAuthService.changePassword).toHaveBeenCalledWith(
-        'currentPassword',
-        'newPassword123'
-      );
-    });
-  });
-
-  describe('Error Handling Integration', () => {
-    it('should handle authentication errors gracefully', async () => {
-      mockAuthService.login.mockResolvedValueOnce({
+  describe("Signup Validation", () => {
+    it("should reject signup with mismatched passwords", async () => {
+      mockSupabaseAuth.signup.mockResolvedValueOnce({
         success: false,
-        error: 'Invalid credentials',
+        error: "Passwords do not match",
       });
 
-      const result = await authService.login({
-        email: 'test@example.com',
-        password: 'wrongpassword',
+      const result = await supabaseAuthService.signup({
+        name: "Test User",
+        email: "test@example.com",
+        password: "Password123!",
+        confirmPassword: "Different123!",
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe('Invalid credentials');
+      expect(result.error).toContain("Passwords do not match");
     });
 
-    it('should handle storage errors during authentication', async () => {
-      mockAuthService.getCurrentUser.mockRejectedValueOnce(new Error('Storage error'));
+    it("should reject signup with invalid email", async () => {
+      mockSupabaseAuth.signup.mockResolvedValueOnce({
+        success: false,
+        error: "Please enter a valid email address",
+      });
 
-      await expect(authService.getCurrentUser()).rejects.toThrow('Storage error');
+      const result = await supabaseAuthService.signup({
+        name: "Test User",
+        email: "not-an-email",
+        password: "Password123!",
+        confirmPassword: "Password123!",
+      });
+
+      expect(result.success).toBe(false);
     });
 
-    it('should handle network errors during authentication', async () => {
-      mockAuthService.login.mockRejectedValueOnce(new Error('Network error'));
+    it("should reject signup with weak password", async () => {
+      mockSupabaseAuth.signup.mockResolvedValueOnce({
+        success: false,
+        error: "Password requirements not met",
+      });
+
+      const result = await supabaseAuthService.signup({
+        name: "Test User",
+        email: "test@example.com",
+        password: "123",
+        confirmPassword: "123",
+      });
+
+      expect(result.success).toBe(false);
+    });
+  });
+
+  describe("Login Error Handling", () => {
+    it("should return error for invalid credentials", async () => {
+      mockSupabaseAuth.login.mockResolvedValueOnce({
+        success: false,
+        error: "Invalid email or password",
+      });
+
+      const result = await supabaseAuthService.login({
+        email: "test@example.com",
+        password: "wrongpassword",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe("Invalid email or password");
+    });
+
+    it("should return error for unverified email", async () => {
+      mockSupabaseAuth.login.mockResolvedValueOnce({
+        success: false,
+        error: "Please verify your email address.",
+      });
+
+      const result = await supabaseAuthService.login({
+        email: "unverified@example.com",
+        password: "Password123!",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("verify your email");
+    });
+
+    it("should handle network errors during login", async () => {
+      mockSupabaseAuth.login.mockRejectedValueOnce(
+        new Error("Network request failed"),
+      );
 
       await expect(
-        authService.login({
-          email: 'test@example.com',
-          password: 'password123',
-        })
-      ).rejects.toThrow('Network error');
+        supabaseAuthService.login({
+          email: "test@example.com",
+          password: "Password123!",
+        }),
+      ).rejects.toThrow("Network request failed");
     });
   });
 
-  describe('Session Management Integration', () => {
-    it('should validate session expiration correctly', async () => {
-      // Test valid session
-      const validSession = {
-        userId: mockUser.id,
-        token: 'session_token_123',
-        expiresAt: new Date(Date.now() + 86400000), // 24 hours from now
-        createdAt: new Date(),
-      };
+  describe("Password Management", () => {
+    it("should change password successfully", async () => {
+      mockSupabaseAuth.changePassword.mockResolvedValueOnce();
 
-      mockStorageManager.getSession.mockResolvedValueOnce(validSession);
-      mockAuthService.isAuthenticated.mockResolvedValueOnce(true);
+      await expect(
+        supabaseAuthService.changePassword(
+          "OldPassword123!",
+          "NewPassword456!",
+        ),
+      ).resolves.not.toThrow();
 
-      let isAuthenticated = await authService.isAuthenticated();
-      expect(isAuthenticated).toBe(true);
-
-      // Test expired session
-      const expiredSession = {
-        ...validSession,
-        expiresAt: new Date(Date.now() - 86400000), // 24 hours ago
-      };
-
-      mockStorageManager.getSession.mockResolvedValueOnce(expiredSession);
-      mockAuthService.isAuthenticated.mockResolvedValueOnce(false);
-
-      isAuthenticated = await authService.isAuthenticated();
-      expect(isAuthenticated).toBe(false);
+      expect(mockSupabaseAuth.changePassword).toHaveBeenCalledWith(
+        "OldPassword123!",
+        "NewPassword456!",
+      );
     });
 
-    it('should handle session cleanup on logout', async () => {
-      mockStorageManager.clearUserData.mockResolvedValueOnce();
-      mockAuthService.logout.mockResolvedValueOnce();
+    it("should send password reset email", async () => {
+      mockSupabaseAuth.resetPassword.mockResolvedValueOnce();
 
-      await authService.logout();
+      await expect(
+        supabaseAuthService.resetPassword("test@example.com"),
+      ).resolves.not.toThrow();
 
-      expect(mockStorageManager.clearUserData).toHaveBeenCalled();
+      expect(mockSupabaseAuth.resetPassword).toHaveBeenCalledWith(
+        "test@example.com",
+      );
+    });
+
+    it("should reject password reset with invalid email", async () => {
+      mockSupabaseAuth.resetPassword.mockRejectedValueOnce(
+        new Error("Please enter a valid email address"),
+      );
+
+      await expect(
+        supabaseAuthService.resetPassword("not-an-email"),
+      ).rejects.toThrow("Please enter a valid email address");
     });
   });
 
-  describe('Data Persistence Integration', () => {
-    it('should persist user data correctly during signup', async () => {
-      mockStorageManager.getUser.mockResolvedValueOnce(null);
-      mockStorageManager.storeUser.mockResolvedValueOnce();
-      mockStorageManager.storeCredentials.mockResolvedValueOnce();
-      mockStorageManager.storeSession.mockResolvedValueOnce();
+  describe("Profile Management", () => {
+    it("should update user profile", async () => {
+      mockSupabaseAuth.updateProfile.mockResolvedValueOnce();
 
-      mockAuthService.signup.mockResolvedValueOnce({
-        success: true,
-        user: mockUser,
-        token: 'session_token_123',
+      await expect(
+        supabaseAuthService.updateProfile({ name: "Updated Name" }),
+      ).resolves.not.toThrow();
+
+      expect(mockSupabaseAuth.updateProfile).toHaveBeenCalledWith({
+        name: "Updated Name",
       });
+    });
+  });
 
-      const result = await authService.signup({
-        name: 'Test User',
-        email: 'test@example.com',
-        password: 'password123',
-        confirmPassword: 'password123',
-      });
+  describe("Session Management", () => {
+    it("should return false for isAuthenticated when session is absent", async () => {
+      mockSupabaseAuth.isAuthenticated.mockResolvedValueOnce(false);
 
-      expect(result.success).toBe(true);
-      expect(mockStorageManager.storeUser).toHaveBeenCalled();
-      expect(mockStorageManager.storeCredentials).toHaveBeenCalled();
-      expect(mockStorageManager.storeSession).toHaveBeenCalled();
+      const result = await supabaseAuthService.isAuthenticated();
+      expect(result).toBe(false);
     });
 
-    it('should retrieve persisted data correctly during login', async () => {
-      mockStorageManager.getUser.mockResolvedValueOnce(mockUser);
-      mockStorageManager.getCredentials.mockResolvedValueOnce({
-        hashedPassword: 'hashed_password',
-        salt: 'salt_123',
-      });
+    it("should return true for isAuthenticated with valid session", async () => {
+      mockSupabaseAuth.isAuthenticated.mockResolvedValueOnce(true);
 
-      mockAuthService.login.mockResolvedValueOnce({
-        success: true,
-        user: mockUser,
-        token: 'session_token_123',
-      });
+      const result = await supabaseAuthService.isAuthenticated();
+      expect(result).toBe(true);
+    });
 
-      const result = await authService.login({
-        email: 'test@example.com',
-        password: 'password123',
-      });
+    it("should handle getCurrentUser errors gracefully", async () => {
+      mockSupabaseAuth.getCurrentUser.mockResolvedValueOnce(null);
 
-      expect(result.success).toBe(true);
-      expect(mockStorageManager.getUser).toHaveBeenCalled();
-      expect(mockStorageManager.getCredentials).toHaveBeenCalled();
+      const user = await supabaseAuthService.getCurrentUser();
+      expect(user).toBeNull();
     });
   });
 });

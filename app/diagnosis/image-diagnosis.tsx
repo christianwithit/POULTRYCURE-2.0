@@ -168,7 +168,7 @@ export default function ImageDiagnosis() {
       // with Expo Go. The new array format ["images"] triggers a different code
       // path that fails to write to cache on older Android versions.
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ["images"],
         allowsEditing: false,
         exif: false,
         base64: false,

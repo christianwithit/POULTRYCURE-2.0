@@ -11,7 +11,6 @@ const generateUUID = (): string => {
   const bytes = Crypto.getRandomBytes(16);
   const hex = Array.from(bytes)
     .map((b: number, i: number) => {
-      // Set version (4) and variant bits
       const hexByte = b.toString(16).padStart(2, "0");
       if (i === 6)
         return ((parseInt(hexByte, 16) & 0x0f) | 0x40)
@@ -34,49 +33,46 @@ const generateUUID = (): string => {
   ].join("-");
 };
 
-// API key validation and security
 // Use Constants.expoConfig.extra for production builds, fallback to process.env for development
 const GEMINI_API_KEY =
   Constants.expoConfig?.extra?.geminiApiKey ||
   process.env.EXPO_PUBLIC_GEMINI_API_KEY;
 
-// Log API key status (safe for production - doesn't expose key)
-console.log("=== API KEY DEBUG ===");
-console.log("Constants.expoConfig exists:", !!Constants.expoConfig);
-console.log(
-  "Constants.expoConfig.extra exists:",
-  !!Constants.expoConfig?.extra,
-);
-console.log(
-  "geminiApiKey from extra:",
-  Constants.expoConfig?.extra?.geminiApiKey ? "FOUND" : "NOT FOUND",
-);
-console.log(
-  "process.env key:",
-  process.env.EXPO_PUBLIC_GEMINI_API_KEY ? "FOUND" : "NOT FOUND",
-);
-console.log("Final GEMINI_API_KEY:", GEMINI_API_KEY ? "YES" : "NO");
-if (GEMINI_API_KEY) {
-  console.log("First 10 chars:", GEMINI_API_KEY.substring(0, 10));
-  console.log("Key length:", GEMINI_API_KEY.length);
-}
-console.log("===================");
+if (__DEV__) {
+  console.log("=== API KEY DEBUG ===");
+  console.log("Constants.expoConfig exists:", !!Constants.expoConfig);
+  console.log(
+    "Constants.expoConfig.extra exists:",
+    !!Constants.expoConfig?.extra,
+  );
+  console.log(
+    "geminiApiKey from extra:",
+    Constants.expoConfig?.extra?.geminiApiKey ? "FOUND" : "NOT FOUND",
+  );
+  console.log(
+    "process.env key:",
+    process.env.EXPO_PUBLIC_GEMINI_API_KEY ? "FOUND" : "NOT FOUND",
+  );
+  console.log("Final GEMINI_API_KEY:", GEMINI_API_KEY ? "YES" : "NO");
+  if (GEMINI_API_KEY) {
+    console.log("First 10 chars:", GEMINI_API_KEY.substring(0, 10));
+    console.log("Key length:", GEMINI_API_KEY.length);
+  }
+  console.log("===================");
 
-// Validate API key format
-if (GEMINI_API_KEY && !GEMINI_API_KEY.startsWith("AIza")) {
-  console.warn('⚠️ API key format appears invalid - should start with "AIza"');
+  if (GEMINI_API_KEY && !GEMINI_API_KEY.startsWith("AIza")) {
+    console.warn(
+      '⚠️ API key format appears invalid - should start with "AIza"',
+    );
+  }
 }
-
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || "https://your-api.com";
-const API_KEY = process.env.EXPO_PUBLIC_API_KEY || "";
 
 // Retryable HTTP status codes (transient errors)
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
-const MAX_RETRIES = 2; // reduced — we now have model fallback too
-const BASE_DELAY_MS = 1000; // 1 second
+const MAX_RETRIES = 2;
+const BASE_DELAY_MS = 1000;
 
 // Model fallback chain — tries each in order on 503/overload
-// gemini-2.5-flash-lite has higher rate limits and lower cost as fallback
 const GEMINI_MODELS = [
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
@@ -85,7 +81,6 @@ const GEMINI_MODELS = [
 
 /**
  * Fetch with exponential backoff retry for transient errors.
- * Throws on non-retryable errors or after exhausting retries.
  */
 async function fetchWithRetry(
   url: string,
@@ -99,16 +94,18 @@ async function fetchWithRetry(
       return response;
     }
 
-    // 429 = quota exhausted — retrying same model won't help, bail immediately
+    // 429 = quota exhausted — retrying same model won't help
     if (response.status === 429) {
       return response;
     }
 
     if (attempt < retries) {
-      const delay = BASE_DELAY_MS * Math.pow(2, attempt); // 1s, 2s
-      console.warn(
-        `Gemini API returned ${response.status}. Retrying in ${delay}ms... (attempt ${attempt + 1}/${retries})`,
-      );
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+      if (__DEV__) {
+        console.warn(
+          `Gemini API returned ${response.status}. Retrying in ${delay}ms... (attempt ${attempt + 1}/${retries})`,
+        );
+      }
       await new Promise((resolve) => setTimeout(resolve, delay));
     } else {
       return response;
@@ -118,8 +115,7 @@ async function fetchWithRetry(
 }
 
 /**
- * Try each model in GEMINI_MODELS until one succeeds or all fail with 503.
- * Returns the successful Response, or the last failed Response.
+ * Try each model in GEMINI_MODELS until one succeeds or all fail.
  */
 async function fetchWithModelFallback(body: object): Promise<Response> {
   let lastResponse: Response | null = null;
@@ -133,7 +129,7 @@ async function fetchWithModelFallback(body: object): Promise<Response> {
     });
 
     if (response.ok) {
-      if (model !== GEMINI_MODELS[0]) {
+      if (__DEV__ && model !== GEMINI_MODELS[0]) {
         console.log(`✅ Gemini model fallback succeeded with: ${model}`);
       }
       return response;
@@ -141,7 +137,6 @@ async function fetchWithModelFallback(body: object): Promise<Response> {
 
     lastResponse = response;
 
-    // Only fall through to next model on overload/quota errors
     // Auth/not-found errors won't be fixed by switching models
     if (
       response.status === 403 ||
@@ -151,9 +146,11 @@ async function fetchWithModelFallback(body: object): Promise<Response> {
       return response;
     }
 
-    console.warn(
-      `Model ${model} unavailable (${response.status}), trying next model...`,
-    );
+    if (__DEV__) {
+      console.warn(
+        `Model ${model} unavailable (${response.status}), trying next model...`,
+      );
+    }
   }
 
   return lastResponse!;
@@ -171,26 +168,21 @@ export class DiagnosisAPI {
     const errors: string[] = [];
     const warnings: string[] = [];
 
-    // Check if API key exists
     if (!GEMINI_API_KEY) {
       errors.push(
         "EXPO_PUBLIC_GEMINI_API_KEY is not set in environment variables",
       );
     } else {
-      // Check API key format
       if (!GEMINI_API_KEY.startsWith("AIza")) {
         warnings.push(
           'API key format appears invalid - should start with "AIza"',
         );
       }
-
-      // Check API key length (typical Google API keys are 39 characters)
       if (GEMINI_API_KEY.length < 30) {
         warnings.push("API key appears too short - may be incomplete");
       }
     }
 
-    // Check model configuration
     const model = process.env.EXPO_PUBLIC_GEMINI_MODEL;
     if (
       model &&
@@ -205,26 +197,21 @@ export class DiagnosisAPI {
       warnings.push(`Configured model "${model}" may not be supported`);
     }
 
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings,
-    };
+    return { valid: errors.length === 0, errors, warnings };
   }
+
   /**
    * Analyze symptoms using Gemini AI with fallback to local analysis
    */
   static async analyzeSymptoms(
     symptoms: string,
   ): Promise<ApiResponse<DiagnosisResult>> {
-    // Check if fallback mode is forced
     if (this.forceFallback) {
-      console.log("Using forced fallback mode");
+      if (__DEV__) console.log("Using forced fallback mode");
       return this.localSymptomAnalysis(symptoms);
     }
 
     try {
-      // First try Gemini API using REST API v1 approach
       const prompt = `You are a poultry disease diagnosis expert. Analyze these symptoms: "${symptoms}". 
       
       Respond with ONLY valid JSON in this exact format (no markdown, no code blocks):
@@ -237,29 +224,16 @@ export class DiagnosisAPI {
       }`;
 
       const response = await fetchWithModelFallback({
-        contents: [
-          {
-            parts: [
-              {
-                text: prompt,
-              },
-            ],
-          },
-        ],
+        contents: [{ parts: [{ text: prompt }] }],
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        // Log error without exposing sensitive information
         console.error("Gemini API Error:", {
           status: response.status,
           error: errorData.error?.message || "Unknown error",
-          note: RETRYABLE_STATUSES.has(response.status)
-            ? `Retried ${MAX_RETRIES} times before failing`
-            : "Non-retryable error",
         });
 
-        // Provide user-friendly error messages without exposing API details
         let userMessage = "AI analysis temporarily unavailable";
         if (response.status === 403) {
           userMessage =
@@ -275,14 +249,9 @@ export class DiagnosisAPI {
       }
 
       const data = await response.json();
-      if (__DEV__) {
-        console.log("Gemini API Response received successfully");
-      }
+      if (__DEV__) console.log("Gemini symptom analysis response received");
 
-      // Parse the response - handle markdown code blocks
       let responseText = data.candidates[0].content.parts[0].text;
-
-      // Remove markdown code blocks if present
       if (responseText.includes("```json")) {
         responseText = responseText
           .replace(/```json\s*/, "")
@@ -311,11 +280,9 @@ export class DiagnosisAPI {
         },
       };
     } catch (error: any) {
-      console.error("Full error:", JSON.stringify(error, null, 2));
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
-
-      console.log("Falling back to local diagnosis...");
+      if (__DEV__) {
+        console.error("Symptom analysis error:", error.message);
+      }
       return this.localSymptomAnalysis(symptoms);
     }
   }
@@ -326,9 +293,8 @@ export class DiagnosisAPI {
   static async analyzeImage(
     imageUri: string,
   ): Promise<ApiResponse<DiagnosisResult>> {
-    // Check if fallback mode is forced
     if (this.forceFallback) {
-      console.log("Using forced fallback mode for image analysis");
+      if (__DEV__) console.log("Using forced fallback mode for image analysis");
       return {
         success: true,
         data: {
@@ -351,7 +317,6 @@ export class DiagnosisAPI {
     }
 
     try {
-      // Convert image to base64
       const imageBase64 = await this.convertImageToBase64(imageUri);
 
       const prompt = `You are a poultry disease diagnosis expert. Analyze this image of a poultry bird for signs of disease or health issues.
@@ -378,12 +343,7 @@ export class DiagnosisAPI {
           {
             parts: [
               { text: prompt },
-              {
-                inline_data: {
-                  mime_type: "image/jpeg",
-                  data: imageBase64,
-                },
-              },
+              { inline_data: { mime_type: "image/jpeg", data: imageBase64 } },
             ],
           },
         ],
@@ -391,13 +351,11 @@ export class DiagnosisAPI {
 
       if (!response.ok) {
         const errorData = await response.json();
-        // Log error without exposing sensitive information
         console.error("Gemini Image API Error:", {
           status: response.status,
           error: errorData.error?.message || "Unknown error",
         });
 
-        // Provide user-friendly error messages
         let userMessage = "Image analysis temporarily unavailable";
         if (response.status === 403) {
           userMessage =
@@ -412,14 +370,9 @@ export class DiagnosisAPI {
       }
 
       const data = await response.json();
-      if (__DEV__) {
-        console.log("Gemini Image Analysis Response received successfully");
-      }
+      if (__DEV__) console.log("Gemini image analysis response received");
 
-      // Parse the response - handle markdown code blocks
       let responseText = data.candidates[0].content.parts[0].text;
-
-      // Remove markdown code blocks if present
       if (responseText.includes("```json")) {
         responseText = responseText
           .replace(/```json\s*/, "")
@@ -449,11 +402,9 @@ export class DiagnosisAPI {
         },
       };
     } catch (error: any) {
-      console.error("Full error:", JSON.stringify(error, null, 2));
-      console.error("Error message:", error.message);
-      console.error("Error stack:", error.stack);
-
-      console.log("Falling back to local diagnosis...");
+      if (__DEV__) {
+        console.error("Image analysis error:", error.message);
+      }
       return {
         success: true,
         data: {
@@ -477,21 +428,15 @@ export class DiagnosisAPI {
   }
 
   /**
-   * Convert image URI to base64 for API transmission.
-   * Resizes to max 1024px on the longest side to keep payload small.
+   * Convert image URI to base64.
+   * Resizes to max 1024px width to keep the Gemini payload small.
    */
   private static async convertImageToBase64(imageUri: string): Promise<string> {
     try {
-      // Resize to fit within 1024x1024 — manipulateAsync preserves aspect ratio
-      // when only one dimension is specified, so we resize by width unconditionally.
-      // This avoids needing Image.getSize (which is unreliable outside components).
       const compressed = await manipulateAsync(
         imageUri,
         [{ resize: { width: 1024 } }],
-        {
-          compress: 0.75,
-          format: SaveFormat.JPEG,
-        },
+        { compress: 0.75, format: SaveFormat.JPEG },
       );
 
       const base64 = await FileSystem.readAsStringAsync(compressed.uri, {
@@ -510,7 +455,7 @@ export class DiagnosisAPI {
   }
 
   /**
-   * Local symptom analysis fallback method
+   * Local symptom analysis fallback using the on-device disease database
    */
   private static async localSymptomAnalysis(
     symptoms: string,
@@ -564,9 +509,9 @@ export class DiagnosisAPI {
    */
   private static generateRecommendations(diseaseInfo: any): string[] {
     const recommendations = [
-      `Immediate isolation of affected bird(s)`,
+      "Immediate isolation of affected bird(s)",
       `Treatment: ${diseaseInfo.treatment}`,
-      `Consult a veterinarian for proper diagnosis`,
+      "Consult a veterinarian for proper diagnosis",
     ];
 
     if (diseaseInfo.severity === "high") {
@@ -581,16 +526,14 @@ export class DiagnosisAPI {
   }
 
   /**
-   * Test Gemini API connection with detailed logging
+   * Test Gemini API connection — dev/debug use only
    */
   static async testConnection(): Promise<void> {
+    if (!__DEV__) return;
+
     console.log("Testing Gemini API...");
     console.log("API Key exists:", !!GEMINI_API_KEY);
-
-    // Only show API key preview in development
-    if (__DEV__) {
-      console.log("API Key preview:", GEMINI_API_KEY?.substring(0, 15) + "...");
-    }
+    console.log("API Key preview:", GEMINI_API_KEY?.substring(0, 15) + "...");
 
     try {
       const response = await fetch(
@@ -604,17 +547,13 @@ export class DiagnosisAPI {
         },
       );
 
-      console.log("Response status:", response.status);
-
       if (response.ok) {
         const data = await response.json();
         console.log("✅ API Connection successful!");
-        if (__DEV__) {
-          console.log(
-            "Response text:",
-            data.candidates?.[0]?.content?.parts?.[0]?.text,
-          );
-        }
+        console.log(
+          "Response text:",
+          data.candidates?.[0]?.content?.parts?.[0]?.text,
+        );
       } else {
         const data = await response.json();
         console.log("❌ API Error:", {
@@ -632,7 +571,6 @@ export class DiagnosisAPI {
    */
   static async checkConnection(): Promise<boolean> {
     try {
-      // Simple connection test using direct fetch
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
         {
@@ -644,8 +582,7 @@ export class DiagnosisAPI {
         },
       );
       return response.ok;
-    } catch (error: any) {
-      console.error("Connection check failed:", error);
+    } catch {
       return false;
     }
   }
@@ -676,14 +613,12 @@ export class DiagnosisAPI {
     }
   }
 
-  /**
-   * Force fallback mode for testing or when API is known to be unavailable
-   */
   private static forceFallback = false;
 
   static toggleFallbackMode(enabled: boolean): void {
     this.forceFallback = enabled;
-    console.log(`Fallback mode ${enabled ? "enabled" : "disabled"}`);
+    if (__DEV__)
+      console.log(`Fallback mode ${enabled ? "enabled" : "disabled"}`);
   }
 
   static isFallbackMode(): boolean {

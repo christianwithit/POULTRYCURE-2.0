@@ -1,11 +1,10 @@
-import { ErrorDisplay } from '@/components/ErrorDisplay';
-import { authService } from '@/services/auth';
-import { AppError, ErrorHandler, RetryHandler } from '@/utils/errorHandling';
-import { PasswordUtils } from '@/utils/password';
-import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
-import React, { useState } from 'react';
-import { Controller, useForm } from 'react-hook-form';
+import { ErrorDisplay } from "@/components/ErrorDisplay";
+import { AppError, ErrorHandler, RetryHandler } from "@/utils/errorHandling";
+import { PasswordUtils } from "@/utils/password";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import React, { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
 import {
     ActivityIndicator,
     Alert,
@@ -17,8 +16,14 @@ import {
     TextInput,
     TouchableOpacity,
     View,
-} from 'react-native';
-import { BORDER_RADIUS, COLORS, FONT_SIZES, SHADOWS, SPACING } from '../../constants/theme';
+} from "react-native";
+import {
+    BORDER_RADIUS,
+    COLORS,
+    FONT_SIZES,
+    SHADOWS,
+    SPACING,
+} from "../../constants/theme";
 
 interface ChangePasswordFormData {
   currentPassword: string;
@@ -40,24 +45,26 @@ export default function ChangePasswordScreen() {
     formState: { errors },
   } = useForm<ChangePasswordFormData>();
 
-  const newPassword = watch('newPassword');
+  const newPassword = watch("newPassword");
 
   const onSubmit = async (data: ChangePasswordFormData) => {
     setLoading(true);
     setError(null);
-    
+
     try {
       await RetryHandler.withRetry(
-        () => authService.changePassword(data.currentPassword, data.newPassword),
+        () =>
+          supabaseAuthService.changePassword(
+            data.currentPassword,
+            data.newPassword,
+          ),
         2, // Max 2 retries
-        1000 // 1s delay
+        1000, // 1s delay
       );
-      
-      Alert.alert(
-        'Success',
-        'Your password has been changed successfully',
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
+
+      Alert.alert("Success", "Your password has been changed successfully", [
+        { text: "OK", onPress: () => router.back() },
+      ]);
     } catch (error) {
       const appError = ErrorHandler.mapError(error);
       setError(appError);
@@ -73,36 +80,38 @@ export default function ChangePasswordScreen() {
   const validateNewPassword = (password: string) => {
     const validation = PasswordUtils.validatePasswordStrength(password);
     if (!validation.isValid) {
-      return validation.errors.join(', ');
+      return validation.errors.join(", ");
     }
     return true;
   };
 
   const validateConfirmPassword = (confirmPassword: string) => {
     if (confirmPassword !== newPassword) {
-      return 'Passwords do not match';
+      return "Passwords do not match";
     }
     return true;
   };
 
   const getPasswordStrengthInfo = () => {
     if (!newPassword) return null;
-    
+
     const validation = PasswordUtils.validatePasswordStrength(newPassword);
     return (
       <View style={styles.passwordRequirements}>
         <Text style={styles.requirementsTitle}>Password Requirements:</Text>
         {validation.requirements.map((req, index) => (
           <View key={index} style={styles.requirementItem}>
-            <Ionicons 
-              name={req.met ? "checkmark-circle" : "close-circle"} 
-              size={16} 
-              color={req.met ? COLORS.success : COLORS.error} 
+            <Ionicons
+              name={req.met ? "checkmark-circle" : "close-circle"}
+              size={16}
+              color={req.met ? COLORS.success : COLORS.error}
             />
-            <Text style={[
-              styles.requirementText,
-              { color: req.met ? COLORS.success : COLORS.error }
-            ]}>
+            <Text
+              style={[
+                styles.requirementText,
+                { color: req.met ? COLORS.success : COLORS.error },
+              ]}
+            >
               {req.text}
             </Text>
           </View>
@@ -112,9 +121,9 @@ export default function ChangePasswordScreen() {
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView contentContainerStyle={styles.scrollContainer}>
         <View style={styles.header}>
@@ -126,8 +135,8 @@ export default function ChangePasswordScreen() {
         </View>
 
         {error && (
-          <ErrorDisplay 
-            error={error} 
+          <ErrorDisplay
+            error={error}
             onRetry={handleRetry}
             onDismiss={() => setError(null)}
             style={{ marginHorizontal: SPACING.lg }}
@@ -143,11 +152,14 @@ export default function ChangePasswordScreen() {
                 control={control}
                 name="currentPassword"
                 rules={{
-                  required: 'Current password is required',
+                  required: "Current password is required",
                 }}
                 render={({ field: { onChange, onBlur, value } }) => (
                   <TextInput
-                    style={[styles.passwordInput, errors.currentPassword && styles.inputError]}
+                    style={[
+                      styles.passwordInput,
+                      errors.currentPassword && styles.inputError,
+                    ]}
                     placeholder="Enter your current password"
                     value={value}
                     onChangeText={onChange}
@@ -169,7 +181,9 @@ export default function ChangePasswordScreen() {
               </TouchableOpacity>
             </View>
             {errors.currentPassword && (
-              <Text style={styles.errorText}>{errors.currentPassword.message}</Text>
+              <Text style={styles.errorText}>
+                {errors.currentPassword.message}
+              </Text>
             )}
           </View>
 
@@ -181,12 +195,15 @@ export default function ChangePasswordScreen() {
                 control={control}
                 name="newPassword"
                 rules={{
-                  required: 'New password is required',
+                  required: "New password is required",
                   validate: validateNewPassword,
                 }}
                 render={({ field: { onChange, onBlur, value } }) => (
                   <TextInput
-                    style={[styles.passwordInput, errors.newPassword && styles.inputError]}
+                    style={[
+                      styles.passwordInput,
+                      errors.newPassword && styles.inputError,
+                    ]}
                     placeholder="Enter your new password"
                     value={value}
                     onChangeText={onChange}
@@ -221,12 +238,15 @@ export default function ChangePasswordScreen() {
                 control={control}
                 name="confirmPassword"
                 rules={{
-                  required: 'Please confirm your new password',
+                  required: "Please confirm your new password",
                   validate: validateConfirmPassword,
                 }}
                 render={({ field: { onChange, onBlur, value } }) => (
                   <TextInput
-                    style={[styles.passwordInput, errors.confirmPassword && styles.inputError]}
+                    style={[
+                      styles.passwordInput,
+                      errors.confirmPassword && styles.inputError,
+                    ]}
                     placeholder="Confirm your new password"
                     value={value}
                     onChangeText={onChange}
@@ -248,7 +268,9 @@ export default function ChangePasswordScreen() {
               </TouchableOpacity>
             </View>
             {errors.confirmPassword && (
-              <Text style={styles.errorText}>{errors.confirmPassword.message}</Text>
+              <Text style={styles.errorText}>
+                {errors.confirmPassword.message}
+              </Text>
             )}
           </View>
         </View>
@@ -257,15 +279,31 @@ export default function ChangePasswordScreen() {
         <View style={styles.tipsSection}>
           <Text style={styles.tipsTitle}>Security Tips:</Text>
           <View style={styles.tipItem}>
-            <Ionicons name="shield-checkmark" size={16} color={COLORS.primary} />
-            <Text style={styles.tipText}>Use a unique password you don't use elsewhere</Text>
+            <Ionicons
+              name="shield-checkmark"
+              size={16}
+              color={COLORS.primary}
+            />
+            <Text style={styles.tipText}>
+              Use a unique password you don't use elsewhere
+            </Text>
           </View>
           <View style={styles.tipItem}>
-            <Ionicons name="shield-checkmark" size={16} color={COLORS.primary} />
-            <Text style={styles.tipText}>Include a mix of letters, numbers, and symbols</Text>
+            <Ionicons
+              name="shield-checkmark"
+              size={16}
+              color={COLORS.primary}
+            />
+            <Text style={styles.tipText}>
+              Include a mix of letters, numbers, and symbols
+            </Text>
           </View>
           <View style={styles.tipItem}>
-            <Ionicons name="shield-checkmark" size={16} color={COLORS.primary} />
+            <Ionicons
+              name="shield-checkmark"
+              size={16}
+              color={COLORS.primary}
+            />
             <Text style={styles.tipText}>Avoid using personal information</Text>
           </View>
         </View>
@@ -273,7 +311,10 @@ export default function ChangePasswordScreen() {
         {/* Action Buttons */}
         <View style={styles.buttonSection}>
           <TouchableOpacity
-            style={[styles.changeButton, loading && styles.changeButtonDisabled]}
+            style={[
+              styles.changeButton,
+              loading && styles.changeButtonDisabled,
+            ]}
             onPress={handleSubmit(onSubmit)}
             disabled={loading}
           >
@@ -307,7 +348,7 @@ const styles = StyleSheet.create({
     paddingBottom: SPACING.xl,
   },
   header: {
-    alignItems: 'center',
+    alignItems: "center",
     backgroundColor: COLORS.white,
     paddingVertical: SPACING.xl,
     marginBottom: SPACING.lg,
@@ -315,7 +356,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: FONT_SIZES.xxl,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     color: COLORS.text,
     marginTop: SPACING.md,
     marginBottom: SPACING.sm,
@@ -323,7 +364,7 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: FONT_SIZES.md,
     color: COLORS.textMuted,
-    textAlign: 'center',
+    textAlign: "center",
     paddingHorizontal: SPACING.lg,
   },
   formSection: {
@@ -338,13 +379,13 @@ const styles = StyleSheet.create({
   },
   label: {
     fontSize: FONT_SIZES.md,
-    fontWeight: '600',
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: SPACING.sm,
   },
   passwordInputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: BORDER_RADIUS.md,
@@ -377,13 +418,13 @@ const styles = StyleSheet.create({
   },
   requirementsTitle: {
     fontSize: FONT_SIZES.sm,
-    fontWeight: '600',
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: SPACING.xs,
   },
   requirementItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: SPACING.xs,
   },
   requirementText: {
@@ -399,13 +440,13 @@ const styles = StyleSheet.create({
   },
   tipsTitle: {
     fontSize: FONT_SIZES.md,
-    fontWeight: '600',
+    fontWeight: "600",
     color: COLORS.text,
     marginBottom: SPACING.sm,
   },
   tipItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginBottom: SPACING.sm,
   },
   tipText: {
@@ -422,7 +463,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
-    alignItems: 'center',
+    alignItems: "center",
     ...SHADOWS.small,
   },
   changeButtonDisabled: {
@@ -431,19 +472,19 @@ const styles = StyleSheet.create({
   changeButtonText: {
     color: COLORS.white,
     fontSize: FONT_SIZES.md,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   cancelButton: {
     backgroundColor: COLORS.white,
     paddingVertical: SPACING.md,
     borderRadius: BORDER_RADIUS.md,
-    alignItems: 'center',
+    alignItems: "center",
     borderWidth: 1,
     borderColor: COLORS.border,
   },
   cancelButtonText: {
     color: COLORS.text,
     fontSize: FONT_SIZES.md,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 });
